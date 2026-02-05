@@ -160,7 +160,7 @@ const DashboardPage = () => {
     return (
         <div className="relative min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 overflow-hidden" ref={containerRef}>
             {/* Header */}
-            <div className="absolute top-10 left-6 right-6 z-10 flex justify-between items-start">
+            <div className="absolute top-10 left-6 right-6 z-50 flex justify-between items-start">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-800">Explore</h1>
                     <p className="text-sm text-gray-500">Tap a bubble to start</p>
