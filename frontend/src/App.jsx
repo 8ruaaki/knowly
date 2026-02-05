@@ -7,6 +7,7 @@ import DashboardPage from './pages/DashboardPage';
 import FindFriendsPage from './pages/FindFriendsPage';
 import MyPage from './pages/MyPage';
 import QuizPage from './pages/QuizPage';
+import ProtectedRoute from './components/ProtectedRoute';
 
 
 function App() {
@@ -15,11 +16,29 @@ function App() {
       <Routes>
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/login" element={<LoginPage />} />
-        {/* Default redirect to login for now, or dashboard if we had auth state */}
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/mypage" element={<MyPage />} />
-        <Route path="/search" element={<FindFriendsPage />} />
-        <Route path="/quiz/:topic" element={<QuizPage />} />
+
+        {/* Protected Routes */}
+        <Route path="/" element={
+          <ProtectedRoute>
+            <DashboardPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/mypage" element={
+          <ProtectedRoute>
+            <MyPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/search" element={
+          <ProtectedRoute>
+            <FindFriendsPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/quiz/:topic" element={
+          <ProtectedRoute>
+            <QuizPage />
+          </ProtectedRoute>
+        } />
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
