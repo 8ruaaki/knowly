@@ -33,8 +33,8 @@ const DashboardPage = () => {
                         y: Math.random() * 60 + 10,
                         vx: (Math.random() - 0.5) * 0.2, // Velocity
                         vy: (Math.random() - 0.5) * 0.2,
-                        size: Math.random() > 0.6 ? 80 : (Math.random() > 0.3 ? 60 : 45), // Numeric size for collision
-                        sizeProp: Math.random() > 0.6 ? 'lg' : (Math.random() > 0.3 ? 'md' : 'sm'),
+                        size: 60, // Uniform numeric size for collision
+                        sizeProp: 'md', // Uniform visual size
                         delay: Math.random() * 2
                     }));
                     setTopics(bubbles);
@@ -64,12 +64,12 @@ const DashboardPage = () => {
                     t.x += t.vx;
                     t.y += t.vy;
 
-                    // Boundaries (bounce) with padding
-                    // Keep bubbles within 5% to 95%
-                    if (t.x < 5) { t.x = 5; t.vx *= -1; }
+                    // Boundaries (bounce) with safe padding
+                    // Tighter constraints for mobile to valid clipping (10% to 90%)
+                    if (t.x < 10) { t.x = 10; t.vx *= -1; }
                     if (t.x > 90) { t.x = 90; t.vx *= -1; }
-                    if (t.y < 5) { t.y = 5; t.vy *= -1; }
-                    if (t.y > 80) { t.y = 80; t.vy *= -1; } // Bottom padding for nav
+                    if (t.y < 10) { t.y = 10; t.vy *= -1; }
+                    if (t.y > 80) { t.y = 80; t.vy *= -1; }
                 });
 
                 // 2. Collision Detection & Resolution
@@ -85,12 +85,9 @@ const DashboardPage = () => {
 
                             const dist = Math.sqrt(dx * dx + dy * dy);
 
-                            // Estimate size in % (tuned multiplier)
-                            // 80px on small screen (375px) is ~21%
-                            // 80px on large screen (1920px) is ~4%
-                            // Use a safer fixed percentage estimate based on sizeProp
-                            const sizeMap = { 'lg': 25, 'md': 20, 'sm': 15 };
-                            const minDistance = (sizeMap[a.sizeProp] + sizeMap[b.sizeProp]) / 2.5;
+                            // Uniform size calculation
+                            // 'md' size approx 20
+                            const minDistance = 18; // Fixed distance for uniform bubbles
 
                             if (dist < minDistance) {
                                 // Push apart
