@@ -401,31 +401,33 @@ function refineInterest(params) {
     }
 
     const prompt = `
-      You are a helpful assistant for a Quiz App called "Knowly". 
+      You are a helpful assistant for an Interest Discovery App called "Knowly". 
       A user has entered an interest: "${interest}".
-      Your goal is to ensure the topic is specific enough to generate a fun, challenging trivia quiz.
+      Your goal is to help the user identify their specific passion within that topic.
+      DO NOT assume the user wants to take a quiz immediately. You are exploring their interests.
 
       ${historyText}
       
       Rules:
-      Rules:
-      1. If the topic is broad (e.g., "Music", "History", "Science", "Sports", "Movies", "Food", "Travel", "Art", "Technology", "Animals", "Zelda"), return 'broad'.
+      1. If the topic is broad (e.g., "Music", "History", "Science", "Sports", "Movies", "Food", "Travel", "Art", "Technology", "Animals", "Universal Studios"), return 'broad'.
       2. If the topic is valid but has many sub-genres (e.g., "Rock", "Pop", "Anime", "Video Games"), return 'broad'.
-      3. ACCEPT MODERATELY SPECIFIC TOPICS: If the topic is a "Field + Subfield" or "Language + Topic" combination (e.g., "Python Data Science", "Java Web Development", "History of Rome", "90s Rock"), return 'specific'.
-      4. ONLY return 'broad' if the topic is truly too vague to make a good quiz.
-      5. Clarification questions MUST focus on narrowing down to a factual TRIVIA CATEGORY.
-      6. CRITICAL: Phrase your question as if asking the user what they are knowledgeable about or want to take a quiz on.
-      4. Clarification questions MUST focus on narrowing down to a factual TRIVIA CATEGORY.
-      5. CRITICAL: Phrase your question as if asking the user what they are knowledgeable about or want to take a quiz on. 
-         - BAD: "What do you want to know about Zelda?" (User is not asking YOU).
-         - GOOD: "Which Zelda game is your favorite?" or "Which specific title should we make a quiz for?"
-      6. Question MUST be in Japanese (e.g., "いいですね！シリーズの中で『一番詳しい作品』はどれですか？", "クイズにするなら、どの『時代』が良いですか？").
+      3. ACCEPT MODERATELY SPECIFIC TOPICS.
+      4. CHECK FOR LOOPS: if the user's input answers your previous Question (in history), then you MUST accept it as 'specific' combined with the previous context.
+         - Example: AI asks "Movie or Attraction?", User says "Attraction" -> Return 'specific' with "Universal Studios Japan: Jaws (Attraction)".
+      5. Clarification questions MUST focus on exploring what specific aspect they like.
+         - GOOD: "What specific aspect of ${interest} are you interested in? (e.g. History, specific titles)"
+      6. Question MUST be in Japanese (e.g., "いいですね！${interest}の中でも、特に何に興味がありますか？（例：特定の作品名やジャンルなど）").
+      7. REFINED TOPIC FORMAT:
+         - If the input was a refinement of a previous broad topic (based on history), return "Parent: Child" format.
+         - Example: History -> "Universal Studios Japan: Jaws", "Sweets: Chocolate", "Music: J-Pop".
+         - If it's a standalone specific topic, just return the topic (e.g., "Universal Studios Japan").
+      8. You must ask questions only once.
       
       Return ONLY raw JSON:
       {
         "status": "broad" | "specific",
         "question": "string (Japanese clarification question, must be present if broad)",
-        "refined_topic": "string (The cleaned up topic name)"
+        "refined_topic": "string (The cleaned up topic name, using 'Parent: Child' format if applicable)"
       }
     `;
 
