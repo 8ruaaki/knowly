@@ -313,9 +313,31 @@ function generateQuiz(params) {
       Generate a 5-question multiple choice quiz about "${topic}".
       Target Audience: Japanese speakers.
       Difficulty Level: ${difficulty}/10.
-      - Level 1: Basic definitions, simple facts.
-      - Level 5: Intermediate concepts, application.
-      - Level 10: Advanced analysis, obscure details, complex scenarios.
+【Difinition of each Difficulty Level】
+-Phase 1: Common Sense (The Warm-up)
+ -Level 1: Basic Definitions & Simple Facts
+  -General knowledge that most school children know. (e.g., "What is the capital of France?")
+ -Level 2: Popular Culture & Everyday Icons
+  -Famous brands, celebrities, and major global events. Information found on the front page of news sites.
+ -Level 3: General School Curriculum
+  -Standard high-school level subjects. Basic science formulas, historical dates, and classic literature titles.
+-Phase 2: Trivia Enthusiast (The Challenge)
+ -Level 4: Detailed General Knowledge
+  -Facts that require a specific interest in a topic. Secondary characters in movies or vice-presidents.
+ -Level 5: Intermediate Concepts & Application
+  -"Connecting the dots." Identifying a subject based on a series of indirect clues or logic puzzles.
+ -Level 6: Regional & Specialized Facts
+  -Specific cultural details, niche sports stats, or deeper scientific classifications (e.g., Periodic table abbreviations).
+-Phase 3: The Expert (The Deep Dive)
+ -Level 7: Professional & Technical Trivia
+  -Industry-specific knowledge. Terms used by pros in fields like Law, Medicine, or Engineering.
+ -Level 8: Historical Obscurity
+  -Events or figures that are rarely mentioned in textbooks. Specific dates of minor battles or forgotten inventors.
+ -Level 9: Abstract & Niche Nuances
+  -Distinguishing between nearly identical concepts. Etymology of rare words or ultra-specific "firsts" in history.
+  -Phase 4: Grandmaster (The "Impossible" Tier)
+ -Level 10: Advanced Analysis & Complex Scenarios
+  -Obscure details that only a handful of people worldwide might know. Micro-trivia, "un-googleable" facts, and multi-layered lateral thinking puzzles.
       
       Return ONLY a raw JSON array (no markdown formatting).
       output format:
@@ -412,16 +434,18 @@ function refineInterest(params) {
       1. If the topic is broad (e.g., "Music", "History", "Science", "Sports", "Movies", "Food", "Travel", "Art", "Technology", "Animals", "Universal Studios"), return 'broad'.
       2. If the topic is valid but has many sub-genres (e.g., "Rock", "Pop", "Anime", "Video Games"), return 'broad'.
       3. ACCEPT MODERATELY SPECIFIC TOPICS.
-      4. CHECK FOR LOOPS: if the user's input answers your previous Question (in history), then you MUST accept it as 'specific' combined with the previous context.
-         - Example: AI asks "Movie or Attraction?", User says "Attraction" -> Return 'specific' with "Universal Studios Japan: Jaws (Attraction)".
+      4. ONE QUESTION LIMIT: 
+         - Check the Conversation History.
+         - If the History contains ANY user reply to your previous question, you MUST return 'specific'.
+         - Treat the user's latest reply as the "Child" topic and the original interest as the "Parent".
+         - Example: AI asked "Which era?", User said "Edo Priod" -> Return 'specific' with "History: Edo Period".
       5. Clarification questions MUST focus on exploring what specific aspect they like.
+         - BAD: "Which quiz do you want?" "Select a difficulty level."
          - GOOD: "What specific aspect of ${interest} are you interested in? (e.g. History, specific titles)"
       6. Question MUST be in Japanese (e.g., "いいですね！${interest}の中でも、特に何に興味がありますか？（例：特定の作品名やジャンルなど）").
       7. REFINED TOPIC FORMAT:
-         - If the input was a refinement of a previous broad topic (based on history), return "Parent: Child" format.
-         - Example: History -> "Universal Studios Japan: Jaws", "Sweets: Chocolate", "Music: J-Pop".
-         - If it's a standalone specific topic, just return the topic (e.g., "Universal Studios Japan").
-      8. You must ask questions only once.
+         - Return "Parent: Child" format when possible.
+         - Example: History -> "Universal Studios: Jaws", "Sweets: Chocolate", "Music: J-Pop".
       
       Return ONLY raw JSON:
       {
@@ -430,22 +454,36 @@ function refineInterest(params) {
         "refined_topic": "string (The cleaned up topic name, using 'Parent: Child' format if applicable)"
       }
     `;
+    6. Question MUST be in Japanese(e.g., "いいですね！${interest}の中でも、特に何に興味がありますか？（例：特定の作品名やジャンルなど）").
+      7. REFINED TOPIC FORMAT:
+    - If the input was a refinement of a previous broad topic(based on history), return "Parent: Child" format.
+         - Example: History -> "Universal Studios Japan: Jaws", "Sweets: Chocolate", "Music: J-Pop".
+         - If it's a standalone specific topic, just return the topic (e.g., "Universal Studios Japan").
+    8. You must ask questions only once.
+      
+      Return ONLY raw JSON:
+    {
+      "status": "broad" | "specific",
+        "question": "string (Japanese clarification question, must be present if broad)",
+          "refined_topic": "string (The cleaned up topic name, using 'Parent: Child' format if applicable)"
+    }
+    `;
 
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
     const response = UrlFetchApp.fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-      method: 'post',
+    method: 'post',
       contentType: 'application/json',
-      payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    });
+        payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+  });
 
-    let text = JSON.parse(response.getContentText()).candidates[0].content.parts[0].text;
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+  let text = JSON.parse(response.getContentText()).candidates[0].content.parts[0].text;
+  text = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
-    return JSON.parse(text);
+  return JSON.parse(text);
 
-  } catch (e) {
-    return { status: "error", message: e.toString() };
-  }
+} catch (e) {
+  return { status: "error", message: e.toString() };
+}
 }
 
 function getQuiz(params) {
