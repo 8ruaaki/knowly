@@ -85,9 +85,16 @@ const DashboardPage = () => {
 
                             const dist = Math.sqrt(dx * dx + dy * dy);
 
-                            // Uniform size calculation
-                            // 'md' size approx 20
-                            const minDistance = 18; // Fixed distance for uniform bubbles
+                            // Dynamic size calculation based on screen width
+                            // Mobile (<768px): w-24 (96px)
+                            // Desktop (>=768px): w-36 (144px)
+                            const isDesktop = window.innerWidth >= 768;
+                            const bubbleSizePx = isDesktop ? 144 : 96;
+
+                            // Convert pixel size to percentage of screen width for collision logic
+                            // Add 10% buffering for safety
+                            const bubbleSizePercent = (bubbleSizePx / window.innerWidth) * 110;
+                            const minDistance = bubbleSizePercent;
 
                             if (dist < minDistance) {
                                 // Push apart
