@@ -454,36 +454,23 @@ function refineInterest(params) {
         "refined_topic": "string (The cleaned up topic name, using 'Parent: Child' format if applicable)"
       }
     `;
-    6. Question MUST be in Japanese(e.g., "いいですね！${interest}の中でも、特に何に興味がありますか？（例：特定の作品名やジャンルなど）").
-      7. REFINED TOPIC FORMAT:
-    - If the input was a refinement of a previous broad topic(based on history), return "Parent: Child" format.
-         - Example: History -> "Universal Studios Japan: Jaws", "Sweets: Chocolate", "Music: J-Pop".
-         - If it's a standalone specific topic, just return the topic (e.g., "Universal Studios Japan").
-    8. You must ask questions only once.
-      
-      Return ONLY raw JSON:
-    {
-      "status": "broad" | "specific",
-        "question": "string (Japanese clarification question, must be present if broad)",
-          "refined_topic": "string (The cleaned up topic name, using 'Parent: Child' format if applicable)"
-    }
-    `;
+
 
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
     const response = UrlFetchApp.fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-    method: 'post',
+      method: 'post',
       contentType: 'application/json',
-        payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-  });
+      payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
 
-  let text = JSON.parse(response.getContentText()).candidates[0].content.parts[0].text;
-  text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    let text = JSON.parse(response.getContentText()).candidates[0].content.parts[0].text;
+    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
-  return JSON.parse(text);
+    return JSON.parse(text);
 
-} catch (e) {
-  return { status: "error", message: e.toString() };
-}
+  } catch (e) {
+    return { status: "error", message: e.toString() };
+  }
 }
 
 function getQuiz(params) {
