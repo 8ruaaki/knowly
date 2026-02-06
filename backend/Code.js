@@ -275,15 +275,14 @@ function updateProgress(params) {
     if (answeredQuestionsJSON) {
       try {
         const answeredQuestions = JSON.parse(answeredQuestionsJSON);
-        if (answeredQuestions.length > 0) {
+        if (answeredQuestions && Array.isArray(answeredQuestions) && answeredQuestions.length > 0) {
           const historySheet = getTopicHistorySheet(ss);
           const timestamp = new Date();
-          // Batch append for performance
           const rows = answeredQuestions.map(q => [userId, topic, q, timestamp]);
-          // Use appendRow logic (inefficient for large batch but fine for 5 rows)
           rows.forEach(r => historySheet.appendRow(r));
         }
       } catch (e) {
+        // Log error to a 'Logs' sheet or console if easier
         console.error("Failed to save history: " + e.toString());
       }
     }
@@ -383,12 +382,11 @@ function generateQuiz(params) {
       
       ${exclusionText}
 
-      CRITICAL RULES:
-      0. ABSOLUTELY NO REPEATS: Do not generate questions semantically identical to the EXCLUDED QUESTIONS.
-      1. UNIQUE QUESTIONS: Do not generate generic questions. Avoid questions asked in lower levels.
-      2. SINGLE CORRECT ANSWER: Ensure there is EXACTLY ONE indisputably correct answer. Avoid ambiguous options.
-      3. FACTUAL ACCURACY: Double-check dates, names, and numbers. If unsure, choose a different question.
-      4. WRONG OPTIONS: Make distractors plausible but clearly incorrect to an expert.
+      CRITICAL PROCESS:
+      1. Think about the question.
+      2. Select ONE correct answer.
+      3. Create 3 distractors.
+      4. SELF-VERIFICATION: For EACH distractor, explain WHY it is incorrect in the "verification" field. If you cannot explain why it is strictly wrong, CHOOSE A DIFFERENT DISTRACTOR.
       
       Return ONLY a raw JSON array (no markdown formatting).
       output format:
@@ -396,10 +394,10 @@ function generateQuiz(params) {
         {
           "question": "string (in Japanese)",
           "options": [
-            { "text": "string (Option A)", "is_correct": boolean },
-            { "text": "string (Option B)", "is_correct": boolean },
-            { "text": "string (Option C)", "is_correct": boolean },
-            { "text": "string (Option D)", "is_correct": boolean }
+            { "text": "string (Correct Option)", "is_correct": true, "verification": "Correct Answer" },
+            { "text": "string (Wrong Option 1)", "is_correct": false, "verification": "Incorrect because... (reasoning)" },
+            { "text": "string (Wrong Option 2)", "is_correct": false, "verification": "Incorrect because... (reasoning)" },
+            { "text": "string (Wrong Option 3)", "is_correct": false, "verification": "Incorrect because... (reasoning)" }
           ],
           "explanation": "string (short explanation, in Japanese)"
         }
@@ -482,27 +480,32 @@ function refineInterest(params) {
       ${historyText}
       
       Rules:
-      1. If the topic is broad (e.g., "Music", "History", "Science", "Sports", "Movies", "Food", "Travel", "Art", "Technology", "Animals", "Universal Studios"), return 'broad'.
-      2. If the topic is valid but has many sub-genres (e.g., "Rock", "Pop", "Anime", "Video Games"), return 'broad'.
-      3. ACCEPT MODERATELY SPECIFIC TOPICS.
-      4. ONE QUESTION LIMIT: 
-         - Check the Conversation History.
-         - If the History contains ANY user reply to your previous question, you MUST return 'specific'.
-         - Treat the user's latest reply as the "Child" topic and the original interest as the "Parent".
-         - Example: AI asked "Which era?", User said "Edo Priod" -> Return 'specific' with "History: Edo Period".
-      5. Clarification questions MUST focus on exploring what specific aspect they like.
-         - BAD: "Which quiz do you want?" "Select a difficulty level."
-         - GOOD: "What specific aspect of ${interest} are you interested in? (e.g. History, specific titles)"
-      6. Question MUST be in Japanese (e.g., "いいですね！${interest}の中でも、特に何に興味がありますか？（例：特定の作品名やジャンルなど）").
-      7. REFINED TOPIC FORMAT:
-         - Return "Parent: Child" format when possible.
-         - Example: History -> "Universal Studios: Jaws", "Sweets: Chocolate", "Music: J-Pop".
+      1. IF HISTORY IS NOT EMPTY:
+         - You have already asked a question. The user has just replied.
+         - YOU MUST STOP ASKING QUESTIONS.
+         - CHECK KEYWORDS: If user says "All", "General", "Everything", "Especially nothing", "全般", "すべて", "特にない":
+           -> Return 'specific'.
+           -> Refined Topic: "${interest}: General".
+         - OTHERWISE:
+           -> Interpret the user's latest input as the specific topic.
+           -> Return 'specific' immediately.
+           -> Refined Topic: Combine the original interest (Parent) and the user's latest input (Child).
+      
+      2. If History is EMPTY:
+         - ALWAYS return 'broad'.
+         - ALWAYS ask ONE clarification question to deepen the interest.
+         - Do NOT accept the topic immediately, even if it seems specific.
+         - Clarification question MUST be in Japanese: "いいですね！${interest}の中でも、特に何に興味がありますか？（例：[Specific Examples]）"
+
+      3. REFINED TOPIC FORMAT:
+         - Return "Parent: Child" format.
+         - If user input was already specific, just return that.
       
       Return ONLY raw JSON:
       {
         "status": "broad" | "specific",
-        "question": "string (Japanese clarification question, must be present if broad)",
-        "refined_topic": "string (The cleaned up topic name, using 'Parent: Child' format if applicable)"
+        "question": "string (Japanese clarification question, ONLY if broad AND history is empty)",
+        "refined_topic": "string (The cleaned up topic name)"
       }
     `;
 

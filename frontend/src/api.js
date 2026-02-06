@@ -1,6 +1,6 @@
 const MOCK_API = false; // Toggle this to switch between Mock and Real
 
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyTdBLUI42TBh4LFTXASunbNayUURebTnyUDR0N-ER25GJZNiBgV3oTjoy6ynryjRcvqg/exec'; // User replaces this
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwdn3gSzPFi1NgnYxVSyi3pUWAIwpHTX9g5SxFBLx7vCLZsuYIZ9DkXNibdi9I6Um_dvQ/exec'; // User replaces this
 
 // Mock Data
 const MOCK_QUIZ = {
