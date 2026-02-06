@@ -7,6 +7,7 @@ import DashboardPage from './pages/DashboardPage';
 import FindFriendsPage from './pages/FindFriendsPage';
 import MyPage from './pages/MyPage';
 import QuizPage from './pages/QuizPage';
+import BadgesPage from './pages/BadgesPage';
 import ProtectedRoute from './components/ProtectedRoute';
 
 
@@ -36,6 +37,11 @@ function App() {
         <Route path="/quiz/:topic" element={
           <ProtectedRoute>
             <QuizPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/badges" element={
+          <ProtectedRoute>
+            <BadgesPage />
           </ProtectedRoute>
         } />
 

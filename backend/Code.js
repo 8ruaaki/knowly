@@ -42,6 +42,8 @@ function handleRequest(e) {
       result = updateProgress(e.parameter);
     } else if (action === 'refine_interest') {
       result = refineInterest(e.parameter);
+    } else if (action === 'get_user_badges') {
+      result = getUserBadges(e.parameter);
     } else {
       result = { error: 'Invalid action' };
     }
@@ -304,6 +306,12 @@ function updateProgress(params) {
       }
     }
 
+    // Badge Logic: Clear Level 10 with perfect score
+    let badgeAwarded = false;
+    if (currentLevel === 10 && score === 5) {
+      badgeAwarded = awardBadge(ss, userId, topic);
+    }
+
     // Only increment if we just cleared the highest available level, and max is 10
     if (currentLevel === currentMax && currentMax < 10) {
       const newMax = currentMax + 1;
@@ -313,10 +321,63 @@ function updateProgress(params) {
         sheet.getRange(rowIndex, 3).setValue(newMax);
         sheet.getRange(rowIndex, 4).setValue(new Date());
       }
-      return { status: "success", unlocked: true, new_max_level: newMax };
+      return { status: "success", unlocked: true, new_max_level: newMax, badge_awarded: badgeAwarded };
     }
 
-    return { status: "success", unlocked: false };
+    return { status: "success", unlocked: false, badge_awarded: badgeAwarded };
+  } catch (e) {
+    return { status: "error", message: e.toString() };
+  }
+}
+
+// --- Badge Logic ---
+function getBadgesSheet(ss) {
+  let sheet = ss.getSheetByName("UserBadges");
+  if (!sheet) {
+    sheet = ss.insertSheet("UserBadges");
+    sheet.appendRow(["user_id", "topic", "awarded_at"]);
+  }
+  return sheet;
+}
+
+function awardBadge(ss, userId, topic) {
+  try {
+    const sheet = getBadgesSheet(ss);
+    const data = sheet.getDataRange().getValues();
+
+    // Check if already exists
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === userId && String(data[i][1]) === topic) {
+        return false; // Already has badge
+      }
+    }
+
+    sheet.appendRow([userId, topic, new Date()]);
+    return true;
+  } catch (e) {
+    console.error("Error awarding badge: " + e.toString());
+    return false;
+  }
+}
+
+function getUserBadges(params) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = getBadgesSheet(ss);
+    const data = sheet.getDataRange().getValues();
+    const userId = params.user_id;
+    const badges = [];
+
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === userId) {
+        // Return topic as badge identifier for now
+        badges.push({
+          topic: data[i][1],
+          awarded_at: data[i][2]
+        });
+      }
+    }
+    return { status: "success", badges: badges };
   } catch (e) {
     return { status: "error", message: e.toString() };
   }

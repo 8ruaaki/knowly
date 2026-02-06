@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
-import { ArrowLeft, CheckCircle, XCircle, Unlock } from 'lucide-react';
+import { ArrowLeft, CheckCircle, XCircle, Unlock, Award } from 'lucide-react';
 
 const QuizPage = () => {
     const { topic } = useParams();
@@ -24,6 +24,8 @@ const QuizPage = () => {
     const [unlockedNext, setUnlockedNext] = useState(false);
     const [saving, setSaving] = useState(false);
     const [correctlyAnswered, setCorrectlyAnswered] = useState([]);
+
+    const [badgeEarned, setBadgeEarned] = useState(false);
 
     const fetchedRef = React.useRef(false);
 
@@ -67,8 +69,9 @@ const QuizPage = () => {
                 // Send correctly answered questions to backend even if level isn't unlocked
                 const res = await api.updateProgress(userId, cleanTopic, level, score, correctlyAnswered);
 
-                if (res.status === 'success' && res.unlocked) {
-                    setUnlockedNext(true);
+                if (res.status === 'success') {
+                    if (res.unlocked) setUnlockedNext(true);
+                    if (res.badge_awarded) setBadgeEarned(true);
                 }
                 setSaving(false);
             };
@@ -133,7 +136,19 @@ const QuizPage = () => {
                         {score}/{questions.length}
                     </div>
 
-                    {unlockedNext && (
+                    {badgeEarned && (
+                        <div className="mb-6 p-6 bg-yellow-100 border-2 border-yellow-400 rounded-xl animate-bounce shadow-xl">
+                            <div className="flex flex-col items-center justify-center gap-2 text-yellow-800 font-bold">
+                                <div className="p-3 bg-yellow-500 rounded-full text-white shadow-lg">
+                                    <Award size={40} strokeWidth={3} />
+                                </div>
+                                <span className="text-xl">MASTER BADGE EARNED!</span>
+                                <span className="text-sm font-normal opacity-80">You mastered Level 10!</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {!badgeEarned && unlockedNext && (
                         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl animate-bounce">
                             <div className="flex items-center justify-center gap-2 text-yellow-700 font-bold">
                                 <Unlock size={24} />

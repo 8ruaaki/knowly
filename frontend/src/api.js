@@ -208,5 +208,20 @@ export const api = {
             body: formBody
         });
         return res.json();
+    },
+
+    getUserBadges: async (userId) => {
+        if (MOCK_API) {
+            return new Promise(resolve => setTimeout(() => resolve({
+                status: 'success',
+                badges: [
+                    { topic: 'K-pop', awarded_at: new Date().toISOString() },
+                    { topic: 'Coffee', awarded_at: new Date().toISOString() }
+                ]
+            }), 600));
+        }
+        const params = new URLSearchParams({ action: 'get_user_badges', user_id: userId });
+        const res = await fetch(`${GAS_WEB_APP_URL}?${params}`);
+        return res.json();
     }
 };
