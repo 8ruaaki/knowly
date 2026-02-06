@@ -247,7 +247,7 @@ const QuizPage = () => {
                             <p className="font-bold mb-1">
                                 {selectedOption === currentQuestion.correct_index ? "Correct!" : "Incorrect..."}
                             </p>
-                            <p className="text-sm opacity-90">{currentQuestion.explanation}</p>
+                            <p className="text-sm opacity-90 break-words whitespace-pre-wrap">{currentQuestion.explanation}</p>
                         </div>
 
                         <button

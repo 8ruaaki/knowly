@@ -25,23 +25,27 @@ const RefineInterestModal = ({ initialInterest, onClose, onComplete }) => {
         }
     }, []);
 
-    const checkInterest = async (interest) => {
+    const checkInterest = async (userInput = null) => {
         setLoading(true);
-        // Add user message if it's not the initial one
-        if (interest !== initialInterest) {
-            setMessages(prev => [...prev, { role: 'user', text: interest }]);
+
+        let newHistory = [...messages];
+        // Add user message to history if strictly provided
+        if (userInput && userInput !== initialInterest) {
+            const userMsg = { role: 'user', text: userInput };
+            newHistory = [...newHistory, userMsg];
+            setMessages(newHistory);
         }
 
         try {
-            // Pass recent history to backend
-            const history = messages.map(m => ({ role: m.role, text: m.text }));
-            const res = await api.refineInterest(interest, history);
+            // ALWAYS pass initialInterest to keep the context "Parent Topic"
+            // Pass the UPDATED history
+            const res = await api.refineInterest(initialInterest, newHistory.map(m => ({ role: m.role, text: m.text })));
 
             if (res.status === 'broad') {
                 setMessages(prev => [...prev, { role: 'ai', text: res.question }]);
-                setCurrentCandidate(interest);
+                setCurrentCandidate(initialInterest);
             } else if (res.status === 'specific') {
-                onComplete(res.refined_topic || interest);
+                onComplete(res.refined_topic || initialInterest);
             } else {
                 // Handle 'error' or unknown status (e.g. backend not deployed)
                 console.warn("Unexpected status:", res);

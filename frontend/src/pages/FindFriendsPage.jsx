@@ -37,8 +37,8 @@ const UserCard = ({ user, onToggle }) => (
         <button
             onClick={onToggle}
             className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${user.is_following
-                    ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                : 'bg-indigo-600 text-white hover:bg-indigo-700'
                 }`}
         >
             {user.is_following ? (
@@ -149,13 +149,22 @@ const FindFriendsPage = () => {
                     <h1 className="text-xl font-bold text-gray-800">Find Friends</h1>
                 </div>
 
-                <form onSubmit={handleSearch}>
-                    <Input
-                        icon={Search}
-                        placeholder="Search by nickname..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                    />
+                <form onSubmit={handleSearch} className="flex gap-2">
+                    <div className="flex-1">
+                        <Input
+                            icon={Search}
+                            placeholder="Search by nickname..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={searching || !searchQuery.trim()}
+                        className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        Search
+                    </button>
                 </form>
             </div>
 

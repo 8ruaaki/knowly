@@ -76,6 +76,14 @@ function registerUser(params) {
       usersSheet.appendRow(["user_id", "nickname", "password", "interests", "avatar_url", "created_at"]);
     }
 
+    const usersData = usersSheet.getDataRange().getValues();
+    // Check for duplicate nickname (skip header)
+    for (let i = 1; i < usersData.length; i++) {
+      if (String(usersData[i][1]).trim() === String(params.nickname).trim()) {
+        return { status: "error", message: "This nickname is already taken." };
+      }
+    }
+
     // 1. Handle Image Upload (Base64)
     let avatarUrl = "";
     if (params.avatar_base64) {
@@ -308,8 +316,11 @@ function updateProgress(params) {
 
     // Badge Logic: Clear Level 10 with perfect score
     let badgeAwarded = false;
-    if (currentLevel === 10 && score === 5) {
+    // Use Number() to ensure type safety, but loose equality just in case
+    if (Number(currentLevel) === 10 && Number(score) === 5) {
       badgeAwarded = awardBadge(ss, userId, topic);
+      // Log for debugging (will appear in GAS executions)
+      console.log(`Badge Attempt: User ${userId}, Topic ${topic}, Result: ${badgeAwarded}`);
     }
 
     // Only increment if we just cleared the highest available level, and max is 10
@@ -367,6 +378,8 @@ function getUserBadges(params) {
     const data = sheet.getDataRange().getValues();
     const userId = params.user_id;
     const badges = [];
+    // ... rest of existing code ...
+    // const newUserRow = []; // This line is not relevant for getUserBadges
 
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]) === userId) {
@@ -445,24 +458,31 @@ function generateQuiz(params) {
 
       CRITICAL PROCESS:
       1. Think about the question.
-      2. Select ONE correct answer.
-      3. Create 3 distractors.
-      4. SELF-VERIFICATION: For EACH distractor, explain WHY it is incorrect in the "verification" field. If you cannot explain why it is strictly wrong, CHOOSE A DIFFERENT DISTRACTOR.
+      2. PRE-FILTER: Discard any question that relies on obscure theories, minor details with conflicting sources, or ambiguous definitions. Use ONLY "High Consensus" facts.
+      3. Select ONE correct answer.
+      4. FACT CHECK: Verify the correct answer against your database. If there is ANY doubt or ambiguity, choose a different question.
+      4. Create 3 distractors.
+      5. SELF-VERIFICATION: Ensure the correct answer is indisputable and distractors are clearly wrong.
       
-      Return ONLY a raw JSON array (no markdown formatting).
+      Return ONLY a raw JSON array.
       output format:
       [
         {
           "question": "string (in Japanese)",
           "options": [
-            { "text": "string (Correct Option)", "is_correct": true, "verification": "Correct Answer" },
-            { "text": "string (Wrong Option 1)", "is_correct": false, "verification": "Incorrect because... (reasoning)" },
-            { "text": "string (Wrong Option 2)", "is_correct": false, "verification": "Incorrect because... (reasoning)" },
-            { "text": "string (Wrong Option 3)", "is_correct": false, "verification": "Incorrect because... (reasoning)" }
+            { "text": "string (Correct Option)", "is_correct": true },
+            { "text": "string (Wrong Option 1)", "is_correct": false },
+            { "text": "string (Wrong Option 2)", "is_correct": false },
+            { "text": "string (Wrong Option 3)", "is_correct": false }
           ],
-          "explanation": "string (short explanation, in Japanese)"
+          "explanation": "string (short explanation + 'Source: [URL]')",
+          "citation": "string (URL of the verification source)"
         }
       ]
+      
+      RULES FOR EXPLANATION:
+      - Append the source URL at the end of the explanation if available.
+      - Format: '... (Source: https://example.com)'
     `;
 
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
@@ -470,12 +490,17 @@ function generateQuiz(params) {
       return { status: "error", message: "GEMINI_API_KEY not configured in Script Properties" };
     }
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`;
 
     const payload = {
       contents: [{
         parts: [{ text: prompt }]
-      }]
+      }],
+      tools: [{ google_search: {} }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 2000,
+      }
     };
 
     const options = {
@@ -487,23 +512,58 @@ function generateQuiz(params) {
     const response = UrlFetchApp.fetch(apiUrl, options);
     const json = JSON.parse(response.getContentText());
 
+    if (!json.candidates || json.candidates.length === 0) {
+      console.error("Gemini Error: No candidates returned.", JSON.stringify(json));
+      return { status: "error", message: "Gemini could not generate a quiz. Please try again. (Safety filter or overload)" };
+    }
+
     // Extract text from Gemini response
     let text = json.candidates[0].content.parts[0].text;
 
-    // Clean up markdown if present
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    // Robust JSON Extraction: Find first '[' and last ']'
+    const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
 
-    const rawQuizData = JSON.parse(text);
+    if (firstBracket !== -1 && lastBracket !== -1) {
+      text = text.substring(firstBracket, lastBracket + 1);
+    } else {
+      throw new Error("No JSON array found in response");
+    }
+
+    // Attempt to fix common JSON errors (e.g., bad escapes)
+    // specific fix for "Bad Unicode escape": double escape backslashes that are strictly not part of a valid escape sequence?
+    // Actually, simple JSON.parse is usually fine if we isolate the array.
+    // If "Bad Unicode escape" persists, it means the model output '\' instead of '\\'.
+    // Let's try parsing directly first.
+    let rawQuizData;
+    try {
+      rawQuizData = JSON.parse(text);
+    } catch (e) {
+      // Fallback: Escape backslashes if standard parse fails
+      // This is risky but often fixes single backslashes in text
+      // text = text.replace(/\\/g, '\\\\'); 
+      // Better: Just log and re-throw for now, as blind replacement breaks valid escapes like \n
+      console.error("JSON Parse Error Payload:", text);
+      throw e;
+    }
 
     // Transform to standard format (array of strings + correct_index)
     const quizData = rawQuizData.map(q => {
-      const optionsNodes = q.options;
+      let optionsNodes = [...q.options]; // Create a copy to shuffle
+
+      // Fisher-Yates Shuffle
+      for (let i = optionsNodes.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [optionsNodes[i], optionsNodes[j]] = [optionsNodes[j], optionsNodes[i]];
+      }
+
       const optionsText = optionsNodes.map(o => o.text);
       const correctIndex = optionsNodes.findIndex(o => o.is_correct);
+
       return {
         question: q.question,
         options: optionsText,
-        correct_index: correctIndex !== -1 ? correctIndex : 0, // Fallback to 0 if none marked TRUE (shouldn't happen)
+        correct_index: correctIndex !== -1 ? correctIndex : 0,
         explanation: q.explanation
       };
     });
@@ -532,56 +592,106 @@ function refineInterest(params) {
       historyText = "Conversation History:\n" + history.map(h => `- ${h.role}: ${h.text}`).join("\n") + "\n";
     }
 
-    const prompt = `
-      You are a helpful assistant for an Interest Discovery App called "Knowly". 
-      A user has entered an interest: "${interest}".
-      Your goal is to help the user identify their specific passion within that topic.
-      DO NOT assume the user wants to take a quiz immediately. You are exploring their interests.
+    let prompt = "";
 
-      ${historyText}
-      
-      Rules:
-      1. IF HISTORY IS NOT EMPTY:
-         - You have already asked a question. The user has just replied.
-         - YOU MUST STOP ASKING QUESTIONS.
-         - CHECK KEYWORDS: If user says "All", "General", "Everything", "Especially nothing", "全般", "すべて", "特にない":
-           -> Return 'specific'.
-           -> Refined Topic: "${interest}: General".
-         - OTHERWISE:
-           -> Interpret the user's latest input as the specific topic.
-           -> Return 'specific' immediately.
-           -> Refined Topic: Combine the original interest (Parent) and the user's latest input (Child).
-      
-      2. If History is EMPTY:
-         - ALWAYS return 'broad'.
-         - ALWAYS ask ONE clarification question to deepen the interest.
-         - Do NOT accept the topic immediately, even if it seems specific.
-         - Clarification question MUST be in Japanese: "いいですね！${interest}の中でも、特に何に興味がありますか？（例：[Specific Examples]）"
+    // --- STAGE 1: INITIAL DISCOVERY (History is Empty) ---
+    if (history.length === 0) {
+      prompt = `
+          You are a helpful assistant for "Knowly". A user has entered an interest: "${interest}".
+          Your goal is to ask ONE clarification question to help them find a specific passion.
+          
+          RULES:
+          - Return 'broad'.
+          - Create a friendly Japanese clarification question.
+          - Question format: "いいですね！${interest}の中でも、特に何に興味がありますか？（例：[Specific Examples]）"
+          - Do not assume a specific topic yet.
+          
+          Return JSON:
+          {
+            "status": "broad",
+            "question": "string (Japanese question)",
+            "refined_topic": null
+          }
+        `;
+    }
+    // --- STAGE 2: FINALIZATION (History Exists) ---
+    else {
+      // The user has replied. We MUST finalize now.
+      // We need to extract the user's latest input from the history or imply it.
+      // Since we pass the full history, the last item is likely the user's answer.
+      const lastUserMessage = history[history.length - 1].text;
 
-      3. REFINED TOPIC FORMAT:
-         - Return "Parent: Child" format.
-         - If user input was already specific, just return that.
-      
-      Return ONLY raw JSON:
-      {
-        "status": "broad" | "specific",
-        "question": "string (Japanese clarification question, ONLY if broad AND history is empty)",
-        "refined_topic": "string (The cleaned up topic name)"
-      }
-    `;
+      prompt = `
+          You are a helpful assistant for "Knowly".
+          The user is interested in "${interest}".
+          I asked them a clarification question, and they just replied: "${lastUserMessage}".
+          
+          YOUR GOAL: Combine the original interest and their reply into a final specific topic.
+          
+          RULES:
+          - RETURN 'specific' ONLY.
+          - DO NOT ASK MORE QUESTIONS. This is the final step.
+          - If user said "All", "General", "Everything", "特にない", "全部":
+            -> Refined Topic: "${interest}: General"
+          - Otherwise:
+            -> Refined Topic: "${interest}: ${lastUserMessage}" (Clean up if needed, e.g. remove "Check" or "I like")
+            
+          Return JSON:
+          {
+            "status": "specific", 
+            "question": null,
+            "refined_topic": "string (The final topic)"
+          }
+        `;
+    }
 
 
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-    const response = UrlFetchApp.fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+    const response = UrlFetchApp.fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`, {
       method: 'post',
       contentType: 'application/json',
-      payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      payload: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }], // <--- The Fundamental Fix: Enable Google Search Grounding
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 2000,
+        }
+      })
     });
 
-    let text = JSON.parse(response.getContentText()).candidates[0].content.parts[0].text;
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    const json = JSON.parse(response.getContentText());
 
-    return JSON.parse(text);
+    if (!json.candidates || json.candidates.length === 0) {
+      console.error("Gemini Error (Refine): No candidates returned.", JSON.stringify(json));
+      // Fallback to accepting the interest as is if AI fails
+      return {
+        status: "specific",
+        refined_topic: interest,
+        note: "AI refinement failed, used original input."
+      };
+    }
+
+    let text = json.candidates[0].content.parts[0].text;
+
+    // Robust JSON Extraction for Object
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      text = text.substring(firstBrace, lastBrace + 1);
+    } else {
+      console.error("Gemini Error (Refine): No JSON object found.", text);
+      // Fallback
+      return { status: "specific", refined_topic: interest };
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.error("Gemini Error (Refine): JSON Parse failed.", text);
+      return { status: "specific", refined_topic: interest };
+    }
 
   } catch (e) {
     return { status: "error", message: e.toString() };

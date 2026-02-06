@@ -38,6 +38,12 @@ const SignupPage = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        if (formData.interests.length === 0) {
+            alert("Please add at least one interest to continue.");
+            return;
+        }
+
         setLoading(true);
 
         try {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
-import { Award, Loader } from 'lucide-react';
+import { Award, Loader, ArrowLeft } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import BottomNav from '../components/ui/BottomNav';
 
 const BadgesPage = () => {
@@ -32,11 +33,16 @@ const BadgesPage = () => {
         <div className="min-h-screen bg-gray-50 pb-20">
             {/* Header */}
             <div className="bg-white p-6 shadow-sm mb-6 sticky top-0 z-10">
-                <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                    <Award className="text-yellow-500" />
-                    My Badges
-                </h1>
-                <p className="text-sm text-gray-500">Collect badges by mastering Level 10</p>
+                <div className="flex items-center gap-3 mb-2">
+                    <Link to="/" className="text-gray-500 hover:text-gray-800">
+                        <ArrowLeft size={24} />
+                    </Link>
+                    <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                        <Award className="text-yellow-500" />
+                        My Badges
+                    </h1>
+                </div>
+                <p className="text-sm text-gray-500 pl-9">Collect badges by mastering Level 10</p>
             </div>
 
             {/* List */}
