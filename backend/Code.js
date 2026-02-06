@@ -269,7 +269,26 @@ function updateProgress(params) {
     const topic = params.topic;
     const currentLevel = Number(params.level);
     const score = Number(params.score);
+    const answeredQuestionsJSON = params.answered_questions;
 
+    // 1. Save Answered Questions History
+    if (answeredQuestionsJSON) {
+      try {
+        const answeredQuestions = JSON.parse(answeredQuestionsJSON);
+        if (answeredQuestions.length > 0) {
+          const historySheet = getTopicHistorySheet(ss);
+          const timestamp = new Date();
+          // Batch append for performance
+          const rows = answeredQuestions.map(q => [userId, topic, q, timestamp]);
+          // Use appendRow logic (inefficient for large batch but fine for 5 rows)
+          rows.forEach(r => historySheet.appendRow(r));
+        }
+      } catch (e) {
+        console.error("Failed to save history: " + e.toString());
+      }
+    }
+
+    // 2. Level System Logic
     // Only unlock next level if score is perfect (5)
     if (score < 5) {
       return { status: "success", unlocked: false };
@@ -304,40 +323,72 @@ function updateProgress(params) {
   }
 }
 
+// --- Topic History Logic ---
+
+function getTopicHistorySheet(ss) {
+  let sheet = ss.getSheetByName("TopicHistory");
+  if (!sheet) {
+    sheet = ss.insertSheet("TopicHistory");
+    sheet.appendRow(["user_id", "topic", "question_text", "created_at"]);
+  }
+  return sheet;
+}
+
+function getAnsweredQuestions(ss, userId, topic) {
+  try {
+    const sheet = getTopicHistorySheet(ss);
+    const data = sheet.getDataRange().getValues();
+    const questions = [];
+
+    // Skip header
+    for (let i = 1; i < data.length; i++) {
+      // userId (0), topic (1), question (2)
+      if (String(data[i][0]) === userId && String(data[i][1]) === topic) {
+        questions.push(String(data[i][2]));
+      }
+    }
+    return questions;
+  } catch (e) {
+    return [];
+  }
+}
+
 function generateQuiz(params) {
   try {
     const topic = params.topic || "General Knowledge";
     const difficulty = params.difficulty || 1;
+    const userId = params.user_id;
+
+    // 1. Get Excluded Questions (History)
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const answeredQuestions = getAnsweredQuestions(ss, userId, topic);
+
+    let exclusionText = "";
+    if (answeredQuestions.length > 0) {
+      exclusionText = `
+      EXCLUDED QUESTIONS (Do NOT repeat these):
+      ${answeredQuestions.map(q => `- ${q}`).join('\n')}
+      `;
+    }
 
     const prompt = `
       Generate a 5-question multiple choice quiz about "${topic}".
       Target Audience: Japanese speakers.
       Difficulty Level: ${difficulty}/10.
-【Difinition of each Difficulty Level】
--Phase 1: Common Sense (The Warm-up)
- -Level 1: Basic Definitions & Simple Facts
-  -General knowledge that most school children know. (e.g., "What is the capital of France?")
- -Level 2: Popular Culture & Everyday Icons
-  -Famous brands, celebrities, and major global events. Information found on the front page of news sites.
- -Level 3: General School Curriculum
-  -Standard high-school level subjects. Basic science formulas, historical dates, and classic literature titles.
--Phase 2: Trivia Enthusiast (The Challenge)
- -Level 4: Detailed General Knowledge
-  -Facts that require a specific interest in a topic. Secondary characters in movies or vice-presidents.
- -Level 5: Intermediate Concepts & Application
-  -"Connecting the dots." Identifying a subject based on a series of indirect clues or logic puzzles.
- -Level 6: Regional & Specialized Facts
-  -Specific cultural details, niche sports stats, or deeper scientific classifications (e.g., Periodic table abbreviations).
--Phase 3: The Expert (The Deep Dive)
- -Level 7: Professional & Technical Trivia
-  -Industry-specific knowledge. Terms used by pros in fields like Law, Medicine, or Engineering.
- -Level 8: Historical Obscurity
-  -Events or figures that are rarely mentioned in textbooks. Specific dates of minor battles or forgotten inventors.
- -Level 9: Abstract & Niche Nuances
-  -Distinguishing between nearly identical concepts. Etymology of rare words or ultra-specific "firsts" in history.
-  -Phase 4: Grandmaster (The "Impossible" Tier)
- -Level 10: Advanced Analysis & Complex Scenarios
-  -Obscure details that only a handful of people worldwide might know. Micro-trivia, "un-googleable" facts, and multi-layered lateral thinking puzzles.
+
+      DIFFICULTY GUIDELINES:
+      - Level 1-3: Basic facts, famous works, intro-level knowledge. (e.g., "Who is the main character?", "What year was it released?")
+      - Level 4-6: Intermediate details, plot points, specific terminology. (e.g., "What is the name of the sword?", "Who directed the sequel?")
+      - Level 7-10: Expert trivia, behind-the-scenes facts, obscure lore, production history. (e.g., "What was the budget?", "Who was the original actor cast?", "Specific dates/numbers")
+      
+      ${exclusionText}
+
+      CRITICAL RULES:
+      0. ABSOLUTELY NO REPEATS: Do not generate questions semantically identical to the EXCLUDED QUESTIONS.
+      1. UNIQUE QUESTIONS: Do not generate generic questions. Avoid questions asked in lower levels.
+      2. SINGLE CORRECT ANSWER: Ensure there is EXACTLY ONE indisputably correct answer. Avoid ambiguous options.
+      3. FACTUAL ACCURACY: Double-check dates, names, and numbers. If unsure, choose a different question.
+      4. WRONG OPTIONS: Make distractors plausible but clearly incorrect to an expert.
       
       Return ONLY a raw JSON array (no markdown formatting).
       output format:

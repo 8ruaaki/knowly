@@ -43,14 +43,15 @@ export const api = {
         const res = await fetch(`${GAS_WEB_APP_URL}?${params}`);
         return res.json();
     },
-    updateProgress: async (userId, topic, level, score) => {
+    updateProgress: async (userId, topic, level, score, answeredQuestions = []) => {
         if (MOCK_API) return { status: 'success', unlocked: score >= 5 };
         const params = new URLSearchParams({
             action: 'update_progress',
             user_id: userId,
             topic,
             level,
-            score
+            score,
+            answered_questions: JSON.stringify(answeredQuestions || [])
         });
         const res = await fetch(`${GAS_WEB_APP_URL}?${params}`);
         return res.json();

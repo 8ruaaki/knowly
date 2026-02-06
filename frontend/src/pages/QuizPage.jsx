@@ -23,6 +23,7 @@ const QuizPage = () => {
     const [error, setError] = useState(null);
     const [unlockedNext, setUnlockedNext] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [correctlyAnswered, setCorrectlyAnswered] = useState([]);
 
     const fetchedRef = React.useRef(false);
 
@@ -56,14 +57,16 @@ const QuizPage = () => {
     }, [topic, level]);
 
     useEffect(() => {
-        if (showResults && score === 5) {
+        if (showResults) {
             const saveProgress = async () => {
                 setSaving(true);
                 const cleanTopic = topic.replace('#', '');
                 const savedUser = localStorage.getItem('user');
                 const userId = savedUser ? JSON.parse(savedUser).user_id : 'guest';
 
-                const res = await api.updateProgress(userId, cleanTopic, level, score);
+                // Send correctly answered questions to backend even if level isn't unlocked
+                const res = await api.updateProgress(userId, cleanTopic, level, score, correctlyAnswered);
+
                 if (res.status === 'success' && res.unlocked) {
                     setUnlockedNext(true);
                 }
@@ -71,7 +74,7 @@ const QuizPage = () => {
             };
             saveProgress();
         }
-    }, [showResults, score, topic, level]);
+    }, [showResults, score, topic, level, correctlyAnswered]);
 
     const handleOptionClick = (index) => {
         if (isAnswered) return;
@@ -82,6 +85,7 @@ const QuizPage = () => {
         const currentQ = questions[currentIndex];
         if (index === currentQ.correct_index) {
             setScore(s => s + 1);
+            setCorrectlyAnswered(prev => [...prev, currentQ.question]);
         }
     };
 
