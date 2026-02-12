@@ -42,10 +42,10 @@ const QuizPage = () => {
 
                 const res = await api.getQuiz(userId, cleanTopic, level);
 
-                if (res.status === 'success' && res.questions) {
+                if (res.status === 'success' && Array.isArray(res.questions) && res.questions.length > 0) {
                     setQuestions(res.questions);
                 } else {
-                    setError(res.message || "Failed to generate quiz.");
+                    setError(res.message || "Failed to generate quiz. No valid questions were returned.");
                 }
             } catch (err) {
                 console.error(err);
@@ -174,6 +174,19 @@ const QuizPage = () => {
     }
 
     const currentQuestion = questions[currentIndex];
+
+    // Guard: currentQuestion may be undefined if questions array is unexpectedly empty
+    if (!currentQuestion || !Array.isArray(currentQuestion.options)) {
+        return (
+            <div className="min-h-screen bg-indigo-50 flex flex-col items-center justify-center p-6 text-center">
+                <h2 className="text-xl font-bold text-red-600 mb-2">Oops!</h2>
+                <p className="text-gray-600 mb-6">問題データの読み込みに失敗しました。もう一度お試しください。</p>
+                <button onClick={() => navigate('/')} className="px-6 py-2 bg-white rounded-full shadow-sm font-medium text-gray-700">
+                    Back to Dashboard
+                </button>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">

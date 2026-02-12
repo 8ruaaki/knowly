@@ -1,6 +1,6 @@
 const MOCK_API = false; // Toggle this to switch between Mock and Real
 
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbx3MtnR052tdZ556xcIDkHmL70ySGIeRbTUWjICdC4l2DsrZbZWAa5RnJ0PQCZUwYGc1g/exec'; // User replaces this
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzjk1vSRUrJB3nQwSh9uOB1ykvouLKK_UVlZBMvOIrBndvoELrPB-tb1gmRBhnId_-yOA/exec'; // Pointing to local Node server for testing
 
 // Mock Data
 const MOCK_QUIZ = {
@@ -17,6 +17,47 @@ const MOCK_USER = {
     interests: ['K-pop', 'Coffee', 'AI'],
     badges: []
 };
+
+// Validate and normalize a single question object from the API/LLM response.
+// Returns a well-formed question or null if unrecoverable.
+function normalizeQuestion(q) {
+    if (!q || typeof q !== 'object') return null;
+
+    // options may have been double-JSON-encoded by the LLM
+    let options = q.options;
+    if (typeof options === 'string') {
+        try { options = JSON.parse(options); } catch { options = null; }
+    }
+    if (!Array.isArray(options) || options.length === 0) return null;
+
+    // correct_index may arrive as a string from URLSearchParams / LLM
+    let correctIndex = q.correct_index ?? q.correctIndex ?? q.correct_option ?? 0;
+    correctIndex = Number(correctIndex);
+    if (Number.isNaN(correctIndex) || correctIndex < 0 || correctIndex >= options.length) {
+        correctIndex = 0;
+    }
+
+    const question = q.question ?? q.text ?? '';
+    if (!question) return null;
+
+    return {
+        question,
+        options: options.map(o => (typeof o === 'string' ? o : String(o))),
+        correct_index: correctIndex,
+        explanation: q.explanation ?? '',
+    };
+}
+
+// Validate and normalize the full questions array from the API response.
+function normalizeQuestions(raw) {
+    // Handle double-JSON-encoded string
+    let data = raw;
+    if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch { return []; }
+    }
+    if (!Array.isArray(data)) return [];
+    return data.map(normalizeQuestion).filter(Boolean);
+}
 
 // API Functions
 export const api = {
@@ -35,7 +76,13 @@ export const api = {
         }
         const params = new URLSearchParams({ action: 'generate_quiz', user_id: userId, topic, difficulty });
         const res = await fetch(`${GAS_WEB_APP_URL}?${params}`);
-        return res.json();
+        const json = await res.json();
+
+        // Normalize questions so the UI always receives a clean array
+        if (json.questions) {
+            json.questions = normalizeQuestions(json.questions);
+        }
+        return json;
     },
     getTopicProgress: async (userId, topic) => {
         if (MOCK_API) return { status: 'success', max_level: 1 };

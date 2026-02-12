@@ -1,0 +1,32 @@
+# strict Wikipedia-based Quiz Generation
+
+The user wants to ensure quizzes and explanations are generated solely based on Wikipedia content, and the referenced Wikipedia URL is displayed in the explanation field.
+Currently, [node-server/server.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/node-server/server.js) has logic to append the URL, but [backend/Code.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/backend/Code.js) (Google Apps Script) does not. I will port the robust logic from [server.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/node-server/server.js) to [Code.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/backend/Code.js).
+
+## User Review Required
+> [!IMPORTANT]
+> I will modify [backend/Code.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/backend/Code.js) to strictly append the Wikipedia URL to the explanation. This will affect the explanations shown to users.
+
+## Proposed Changes
+
+### Backend (Google Apps Script)
+#### [MODIFY] [Code.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/backend/Code.js)
+- Update [generateCandidates](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/node-server/server.js#468-549) function to:
+    - Clean up `explanation` field (remove existing "Source:" text if any).
+    - Append [(出典: ${wikiData.url})](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/node-server/server.js#43-44) (using Japanese "出典" as it's a Japanese app).
+    - Ensure strict prompt constraints are maintained (already present, but will verify).
+
+### Node Server (Local Dev)
+#### [MODIFY] [server.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/node-server/server.js)
+- Ensure consistency with [Code.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/backend/Code.js). currently it uses [(Source: ...)](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/node-server/server.js#43-44). I will change it to [(出典: ...)](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/node-server/server.js#43-44) to match the Japanese context if preferred, or keep as is if "Source" is acceptable. Given the user prompt is in Japanese, "出典" is better.
+
+## Verification Plan
+### Manual Verification
+1.  **Generate Quiz**: Use the `generate_quiz` action (via the frontend or direct API call).
+2.  **Check Explanation**: Verify that the generated quiz explanation includes the Wikipedia URL at the end, e.g., `... (出典: https://ja.wikipedia.org/wiki/...)`.
+3.  **Check Content**: Verify the content is based on the Wikipedia article.
+
+### Automated Tests
+- I cannot run automated tests against the deployed GAS.
+- I can run [node-server/server.js](file:///c:/Users/Haruaki%20Nakayama/.gemini/antigravity/scratch/knowly/node-server/server.js) locally.
+- I will run a test script that calls the local API `POST /api?action=generate_quiz` and asserts the response structure.
