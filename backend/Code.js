@@ -378,8 +378,6 @@ function getUserBadges(params) {
     const data = sheet.getDataRange().getValues();
     const userId = params.user_id;
     const badges = [];
-    // ... rest of existing code ...
-    // const newUserRow = []; // This line is not relevant for getUserBadges
 
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]) === userId) {
@@ -456,23 +454,26 @@ function generateQuiz(params) {
       return { status: "error", message: "GEMINI_API_KEY not configured" };
     }
 
-    // 1. Search Wikipedia (Perform ONCE)
+    // 2. Search Wikipedia
     const searchResults = searchWikipedia(topic);
-    if (searchResults.length === 0) {
-      console.warn(`No Wikipedia results for topic: ${topic}`);
-      // Fallback or Error? 
-      // For now, let's return error so frontend knows.
+    if (!searchResults || searchResults.length === 0) {
+      console.warn("No Wikipedia results for: " + topic);
       return { status: "error", message: "No Wikipedia results found for: " + topic };
     }
 
-    // 2. Get Content from Top Results (Randomize for variety)
-    // Pick from top 3 to avoid getting stuck on one article if we need to retry
-    const index = Math.floor(Math.random() * Math.min(searchResults.length, 3));
-    const targetArticle = searchResults[index];
-    const wikiData = getWikipediaContent(targetArticle.title);
+    // 3. Get Content from Top Results (Fetch Multiple)
+    const topResults = searchResults.slice(0, 3);
+    const wikiDataList = [];
 
-    if (!wikiData || !wikiData.content) {
-      console.warn(`No content found for Wikipedia page: ${targetArticle.title}`);
+    for (const result of topResults) {
+      const data = getWikipediaContent(result.title);
+      if (data && data.content) {
+        wikiDataList.push(data);
+      }
+    }
+
+    if (wikiDataList.length === 0) {
+      console.warn(`No content found for any Wikipedia pages: ${topResults.map(r => r.title).join(", ")}`);
       return { status: "error", message: "Failed to retrieve content from Wikipedia." };
     }
 
@@ -484,29 +485,28 @@ function generateQuiz(params) {
 
       console.log(`Attempt ${attempts}: Generating ${countToGenerate} candidates for ${needed} slots.`);
 
-      // Pass wikiData directly
-      const candidates = generateCandidates(apiKey, topic, difficulty, exclusionText, countToGenerate, wikiData);
+      // Pass wikiDataList directly
+      const candidates = generateCandidates(apiKey, topic, difficulty, exclusionText, countToGenerate, wikiDataList);
 
       if (candidates.length === 0) continue;
 
-      // Validate candidates in parallel
-      const validatedBatch = validateCandidates(apiKey, candidates, wikiData);
+      // Validate candidates
+      const validatedBatch = validateCandidates(apiKey, candidates, wikiDataList);
 
-      // 1. Add Validated Questions First (High Quality)
+      // Add valid ones to our list
       for (const q of validatedBatch) {
         if (validQuestions.length < TARGET_COUNT) {
+          // Shuffle options before adding (Final Polish)
           const shuffled = shuffleOptions(q);
           validQuestions.push(shuffled);
         }
       }
 
-      // 2. Fallback: If we still don't have enough, fill with unvalidated candidates
-      // This prevents "Failed to generate" errors when the validator is too strict or API flakes out.
+      // Fallback: If we still don't have enough, fill with unvalidated candidates
       if (validQuestions.length < TARGET_COUNT) {
         console.warn(`Attempt ${attempts}: Validation filtered too many. Using fallback candidates.`);
         for (const q of candidates) {
           if (validQuestions.length < TARGET_COUNT) {
-            // Avoid duplicates check (simple text comparison)
             const isDuplicate = validQuestions.some(vq => vq.question === q.question);
             if (!isDuplicate) {
               const shuffled = shuffleOptions(q);
@@ -517,55 +517,9 @@ function generateQuiz(params) {
       }
     }
 
-    // Fallback: If we still don't have enough, we return what we have
-    // (Or we could have a fallback generation without strict checks if truly desperate, 
-    // but better to return fewer high-quality questions than garbage)
-
-    // --- FINAL FALLBACK: If AI generation completely failed, generate simple quiz programmatically ---
+    // Final check
     if (validQuestions.length === 0) {
-      console.warn("AI Generation Failed. Using programmatic fallback.");
-
-      // Extract first sentence for a natural quiz
-      let summary = "";
-      if (wikiData && wikiData.content) {
-        summary = wikiData.content.split('。')[0];
-        if (summary.length > 80) summary = summary.substring(0, 80) + "...";
-      }
-
-      const fallbackQs = [
-        {
-          question: `「${wikiData.title}」に関する説明として正しいものはどれですか？`,
-          options: [
-            summary + "。",
-            "この用語は、19世紀のフランス文学に由来する。",
-            "これは架空の概念であり、実在しない。",
-            "詳細な記録は一切残されていない。"
-          ],
-          correct_index: 0,
-          explanation: `Wikipediaの概要には「${summary}」と記載されています。(出典: ${wikiData.url})`,
-          citation: wikiData.url
-        },
-        {
-          question: `「${wikiData.title}」について調べる際、最も信頼できる情報源の一つは何ですか？`,
-          options: ["Wikipediaなどの百科事典", "個人の感想ブログ", "噂話", "何もしない"],
-          correct_index: 0,
-          explanation: `Wikipediaなどの百科事典は、基本的な情報を網羅的に知るのに役立ちます。(出典: ${wikiData.url})`,
-          citation: wikiData.url
-        },
-        {
-          question: `「${wikiData.title}」の内容が含まれている可能性が高いカテゴリは？`,
-          options: ["一般教養・知識", "極秘ファイル", "未来予知", "個人の日記"],
-          correct_index: 0,
-          explanation: `「${wikiData.title}」は一般的な知識として分類されます。(出典: ${wikiData.url})`,
-          citation: wikiData.url
-        }
-      ];
-      validQuestions = fallbackQs.map(q => shuffleOptions(q));
-    }
-
-    if (validQuestions.length === 0) {
-      // Should be unreachable now
-      return { status: "error", message: "Failed to generate valid questions after checks." };
+      return { status: "error", message: "Failed to generate any valid questions." };
     }
 
     return {
@@ -576,338 +530,11 @@ function generateQuiz(params) {
     };
 
   } catch (e) {
-    console.error("generateQuiz Error: " + e.toString());
-    return { status: "error", message: "Error: " + e.toString() };
+    return { status: "error", message: e.toString() };
   }
 }
 
-// --- HELPER FUNCTIONS FOR ROBUST GENERATION ---
-
-// --- Wikipedia API Helpers ---
-
-function searchWikipedia(topic) {
-  try {
-    const url = `https://ja.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(topic)}&format=json`;
-    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-    if (response.getResponseCode() !== 200) return [];
-
-    const json = JSON.parse(response.getContentText());
-    return json.query?.search || [];
-  } catch (e) {
-    console.warn("Wikipedia Search Error:", e);
-    return [];
-  }
-}
-
-function getWikipediaContent(title) {
-  try {
-    // API endpoint needs 'origin=*' for CORS if called from browser, but acceptable in GAS.
-    // Ideally we should use 'redirects=1' to handle redirects automatically.
-    const url = `https://ja.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext&redirects=1&titles=${encodeURIComponent(title)}&format=json`;
-    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-
-    if (response.getResponseCode() !== 200) {
-      console.warn(`Wiki API HTTP Error: ${response.getResponseCode()}`);
-      return null;
-    }
-
-    const json = JSON.parse(response.getContentText());
-    const pages = json.query?.pages;
-    if (!pages) return null;
-
-    const pageIds = Object.keys(pages);
-    if (pageIds.length === 0) return null;
-
-    const pageId = pageIds[0];
-    if (pageId === "-1") {
-      console.warn(`Wiki Page Not Found (ID -1): ${title}`);
-      return null;
-    }
-
-    const page = pages[pageId];
-    if (!page || !page.title) return null;
-
-    // Handle missing extract (some pages are special or empty)
-    if (!page.extract) {
-      console.warn(`Wiki Page has no extract: ${title}`);
-      return null;
-    }
-
-    return {
-      title: page.title,
-      content: page.extract,
-      // Use the canonical URL from the response or construct it carefully
-      url: `https://ja.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, "_"))}`
-    };
-  } catch (e) {
-    console.warn("Wikipedia Content Error:", e);
-    return null;
-  }
-}
-
-// Helper to safely extract text from Gemini response
-function getGeminiText(json) {
-  if (json && json.candidates && json.candidates.length > 0 &&
-    json.candidates[0].content &&
-    json.candidates[0].content.parts &&
-    json.candidates[0].content.parts.length > 0) {
-    return json.candidates[0].content.parts[0].text;
-  }
-  return null;
-}
-
-function generateCandidates(apiKey, topic, difficulty, exclusionText, count, wikiData) {
-  if (!wikiData || !wikiData.content) {
-    console.warn(`Invalid wikiData provided.`);
-    return [];
-  }
-
-  // Truncate content if too long (Gemini 1.5 Pro has huge context, but let's be safe/efficient)
-  // 20k chars is plenty for a quiz.
-  const truncatedContent = wikiData.content.substring(0, 20000);
-
-  const prompt = `
-      Create ${count} multiple choice quiz question(s) based ONLY on the following text.
-      
-      SOURCE TEXT:
-      """
-      ${truncatedContent}
-      """
-
-      Target Audience: Japanese speakers.
-      Difficulty Level: ${difficulty}/10.
-
-      DIFFICULTY GUIDELINES:
-      - Level 1-3: Basic facts found in the introduction or early sections.
-      - Level 4-6: Specific details, dates, or names found in the body.
-      - Level 7-10: Minor details, production notes, or specific statistics.
-      
-      ${exclusionText}
-
-      NEGATIVE CONSTRAINTS (CRITICAL):
-      - Do NOT ask what the title of the article is (e.g., "What is the name of this Wikipedia article?").
-      - Do NOT ask about the structure of the article (e.g., "What is the first sentence?", "Does it have a See Also section?").
-      - Do NOT use phrases like "According to the text", "Based on the article", "In this passage" in the question text. The question should stand alone as a general knowledge question.
-      - Do NOT ask about the URL or meta-data.
-      - Do NOT create questions where the answer is simply the topic name itself, unless asking for a specific alternate name or definition.
-
-      CRITICAL PROCESS:
-      1. Read the SOURCE TEXT carefully.
-      2. Identify facts suitable for the requested difficulty (history, characteristics, dates, people, significance).
-      3. Create a question that is STRICTLY answerable using ONLY the Source Text.
-      4. Create 3 distractors that are plausible but incorrect based on the text.
-      5. WRITE THE EXPLANATION BASED ONLY ON THE SOURCE TEXT. Do not use outside knowledge. Explain *why* the answer is correct using facts from the provided text.
-
-      REQUIRED OUTPUT FORMAT:
-      Return ONLY a raw JSON array.
-      [
-        {
-          "question": "string (in Japanese)",
-          "options": [
-            { "text": "string (Correct Option)", "is_correct": true },
-            { "text": "string (Wrong Option 1)", "is_correct": false },
-            { "text": "string (Wrong Option 2)", "is_correct": false },
-            { "text": "string (Wrong Option 3)", "is_correct": false }
-          ],
-          "explanation": "string (Explanation based STRICTLY on the Source Text above) (出典: ${wikiData.url})",
-          "citation": "${wikiData.url}"
-        }
-      ]
-    `;
-
-  const payload = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 4000 }
-  };
-
-  try {
-    const response = UrlFetchApp.fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'post',
-        contentType: 'application/json',
-        payload: JSON.stringify(payload),
-        muteHttpExceptions: true
-      }
-    );
-
-    if (response.getResponseCode() !== 200) {
-      console.error("Gemini Gen Error", response.getContentText());
-      return [];
-    }
-
-    const json = JSON.parse(response.getContentText());
-    const text = getGeminiText(json);
-
-    if (!text) return [];
-
-    // Extract JSON
-    const firstBracket = text.indexOf('[');
-    const lastBracket = text.lastIndexOf(']');
-    if (firstBracket !== -1 && lastBracket !== -1) {
-      text = text.substring(firstBracket, lastBracket + 1);
-      try {
-        const candidates = JSON.parse(text);
-        // Force inject the URL just in case LLM messed it up
-        return candidates.map(c => {
-          // 1. Ensure citation field matches the source we provided
-          c.citation = wikiData.url;
-
-          // 2. Clean up explanation to strictly use our Wikipedia URL
-          let cleanExplanation = c.explanation || "";
-
-          // Remove existing Source tags (English/Japanese)
-          cleanExplanation = cleanExplanation.replace(/[\(（]\s*(Source|出典|Reference|ソース)[:：].*?[\)）]/gi, "");
-          cleanExplanation = cleanExplanation.replace(/(Source|出典|Reference|ソース)[:：].*?$/mi, "");
-
-          // Remove ALL URLs from the text to prevent hallucinations or external links
-          // We replace them with empty string.
-          cleanExplanation = cleanExplanation.replace(/https?:\/\/[^\s\)]+/gi, "");
-
-          // Clean up any double spaces or dangling punctuation left over
-          cleanExplanation = cleanExplanation.replace(/\s{2,}/g, " ").trim();
-
-          // Trim and append the correct source
-          c.explanation = `${cleanExplanation} (出典: ${wikiData.url})`;
-
-          return c;
-        });
-      } catch (e) {
-        console.error("JSON Parse Error:", e);
-        return [];
-      }
-    }
-    return [];
-
-  } catch (e) {
-    console.error("Candidate Gen Exception: " + e.toString());
-    return [];
-  }
-}
-
-function validateCandidates(apiKey, candidates, wikiData) {
-  // We will run 3 checks per candidate.
-  // To optimize, we can run them in parallel batches using UrlFetchApp.fetchAll
-  // Request structure: [ Q1_Check1, Q1_Check2, Q1_Check3, Q2_Check1, ... ]
-
-  // Pre-filter invalid candidates to ensure safety
-  candidates = candidates.filter(q => q && q.options && Array.isArray(q.options));
-
-  // Truncate content for validation (a bit shorter than generation to save cost/latency)
-  const truncatedContent = wikiData.content.substring(0, 15000);
-
-  const requests = [];
-
-  candidates.forEach(q => {
-    // Correct Answer Text
-    const correctOption = q.options.find(o => o.is_correct)?.text || "Unknown";
-    const distractors = q.options.filter(o => !o.is_correct).map(o => o.text).join(", ");
-
-    // 1. Self-Correction / Uncertainty Check
-    const prompt1 = `
-      Question: ${q.question}
-      Proposed Answer: ${correctOption}
-      
-      Verify this question against the following text ONLY.
-      SOURCE TEXT:
-      """
-      ${truncatedContent}
-      """
-
-      Is the proposed answer strictly supported by the text?
-      Return JSON: { "confident": boolean, "reason": "string" }
-    `;
-    requests.push(buildGeminiRequest(apiKey, prompt1, false)); // No Search
-
-    // 2. AI Teacher / Judge
-    const prompt2 = `
-      You are a strict quiz editor. Review this question.
-      SOURCE TEXT:
-      """
-      ${truncatedContent}
-      """
-
-      Question: ${q.question}
-      Correct Answer: ${correctOption}
-      Distractors: ${distractors}
-      Explanation: ${q.explanation}
-      
-      Verify facts based ONLY on the Source Text provided above.
-      Check for:
-      1. Factuality (Is it true according to the text?)
-      2. Clarity (Is it unambiguous?)
-      3. Distractor Quality (Are they clearly wrong based on the text?)
-      4. Trivia Quality (Reject questions that just ask "What is the article title?" or "What is this text about?". Ensure it tests specific knowledge.)
-      
-      Return JSON: { "pass": boolean, "reason": "string" }
-    `;
-    requests.push(buildGeminiRequest(apiKey, prompt2, false)); // No Search
-
-    // 3. Reverse Generation (Solver)
-    // Provide question and shuffled options (blind to correctness)
-    const allOptions = q.options.map(o => o.text).sort(() => 0.5 - Math.random());
-    const prompt3 = `
-      Solve this quiz question based ONLY on the following text.
-      SOURCE TEXT:
-      """
-      ${truncatedContent}
-      """
-
-      Question: ${q.question}
-      Options: ${allOptions.join(", ")}
-      
-      Return JSON: { "predicted_answer": "string (exact text from options)" }
-    `;
-    requests.push(buildGeminiRequest(apiKey, prompt3, false)); // No Search
-  });
-
-  console.log(`Running ${requests.length} validation checks...`);
-
-  try {
-    const responses = UrlFetchApp.fetchAll(requests);
-    const validBatch = [];
-
-    // Process responses in groups of 3
-    for (let i = 0; i < candidates.length; i++) {
-      if (responses.length <= i * 3 + 2) {
-        console.warn(`Validation skipped for Q${i + 1}: incomplete responses`);
-        continue;
-      }
-      const q = candidates[i];
-      const correctOption = q.options.find(o => o.is_correct)?.text;
-
-      // Parse Responses
-      const r1 = parseGeminiJSON(responses[i * 3]);     // Uncertainty
-      const r2 = parseGeminiJSON(responses[i * 3 + 1]);   // Teacher
-      const r3 = parseGeminiJSON(responses[i * 3 + 2]);   // Solver
-
-      const check1 = r1?.confident === true;
-      const check2 = r2?.pass === true;
-      // Solver check: Predicted answer should roughly match correct option
-      const predicted = r3?.predicted_answer || "";
-      const check3 = predicted.includes(correctOption) || correctOption.includes(predicted);
-
-      console.log(`Q${i + 1} Checks: Self=${check1}, Judge=${check2}, Solver=${check3} (${predicted} vs ${correctOption})`);
-
-      // RELAXED MODE: Majority vote (2 out of 3) OR Judge Pass (Teacher Authority)
-      // The Solver is often flaky with exact string matching, so we don't want it to veto a good question.
-      // The Judge (check2) is the most holistic check.
-      const score = (check1 ? 1 : 0) + (check2 ? 1 : 0) + (check3 ? 1 : 0);
-
-      if (score >= 2 || check2) {
-        validBatch.push(q);
-      } else {
-        console.warn(`Q${i + 1} Rejected: ${q.question.substring(0, 30)}...`);
-      }
-    }
-    return validBatch;
-
-  } catch (e) {
-    console.error("Validation Error: " + e.toString());
-    // In case of error, return original candidates (fail-open)
-    return candidates;
-  }
-}
+// --- Helper Functions (Top Level) ---
 
 function buildGeminiRequest(apiKey, prompt, useSearch = true) {
   const payload = {
@@ -930,42 +557,24 @@ function buildGeminiRequest(apiKey, prompt, useSearch = true) {
 
 function parseGeminiJSON(response) {
   try {
-    if (!response || response.getResponseCode() !== 200) return null;
-    const json = JSON.parse(response.getContentText());
+    let contentText = "";
+    if (response && typeof response.getContentText === 'function') {
+      if (response.getResponseCode() !== 200) return null;
+      contentText = response.getContentText();
+    } else if (response && response.candidates) {
+      // Already parsed object?
+      const text = getGeminiText(response);
+      return simpleJSONParse(text);
+    } else {
+      return null; // Unknown format
+    }
 
+    const json = JSON.parse(contentText);
     const text = getGeminiText(json);
 
     if (!text) return null;
 
-    // Remove markdown code blocks (```json ... ```)
-    let cleanText = text.replace(/```json\s*/g, "").replace(/```\s*/g, "");
-    
-    // Robust JSON extraction: look for first '{' or '[' and last '}' or ']'
-    // This handles both Objects and Arrays, and ignores surrounding text/markdown
-    const firstChar = cleanText.search(/[\{\[]/);
-    if (firstChar === -1) {
-       console.warn("parseGeminiJSON: No JSON start found");
-       return null; 
-    }
-    
-    // Find the corresponding closing bracket by counting balance or just regex
-    // Simple regex for outermost structure is safer if we assume valid JSON
-    const match = cleanText.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-    
-    if (match) {
-        cleanText = match[0];
-    } else {
-        // Fallback: try substring from first char
-        cleanText = cleanText.substring(firstChar);
-    }
-    
-    try {
-        return JSON.parse(cleanText);
-    } catch (e2) {
-        // Last ditch effort: simple trimming of commonly added garbage
-        console.warn("parseGeminiJSON: Direct parse failed, trying aggressive cleanup", e2);
-        return null;
-    }
+    return simpleJSONParse(text);
 
   } catch (e) {
     console.error("parseGeminiJSON Error: " + e.toString());
@@ -973,67 +582,106 @@ function parseGeminiJSON(response) {
   }
 }
 
-function generateCandidates(apiKey, topic, difficulty, exclusionText, count, wikiData) {
-  if (!wikiData || !wikiData.content) {
-    console.warn(`Invalid wikiData provided.`);
+function simpleJSONParse(text) {
+  if (!text) return null;
+  // Remove markdown code blocks (```json ... ```)
+  let cleanText = text.replace(/```json\s*/g, "").replace(/```\s*/g, "");
+
+  const firstChar = cleanText.search(/[\{\[]/);
+  if (firstChar === -1) return null;
+
+  const match = cleanText.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+  if (match) {
+    cleanText = match[0];
+  } else {
+    cleanText = cleanText.substring(firstChar);
+  }
+
+  try {
+    return JSON.parse(cleanText);
+  } catch (e2) {
+    return null;
+  }
+}
+
+function getGeminiText(json) {
+  if (json && json.candidates && json.candidates.length > 0 &&
+    json.candidates[0].content &&
+    json.candidates[0].content.parts &&
+    json.candidates[0].content.parts.length > 0) {
+    return json.candidates[0].content.parts[0].text;
+  }
+  return null;
+}
+
+function generateCandidates(apiKey, topic, difficulty, exclusionText, count, wikiDataList) {
+  if (!wikiDataList || wikiDataList.length === 0) {
+    console.warn(`Invalid wikiDataList provided.`);
     return [];
   }
 
-  // Truncate content if too long
-  const truncatedContent = wikiData.content.substring(0, 20000);
+  // Combine content from all pages
+  let combinedContent = "";
+  const sourceUrls = [];
 
-  // Revised Prompt with explicit Topic context and Few-Shot example
-  // We request an ARRAY of questions here to be efficient with one call
+  for (const data of wikiDataList) {
+    if (data && data.content) {
+      sourceUrls.push(data.url);
+      combinedContent += `\n--- SOURCE: ${data.title} ---\n${data.content.substring(0, 10000)}\n`;
+    }
+  }
+
+  // Truncate
+  if (combinedContent.length > 50000) {
+    combinedContent = combinedContent.substring(0, 50000) + "\n...(truncated)...";
+  }
+
   const prompt = `
-      You are a professional quiz creator.
-      Target Audience: Japanese speakers.
-      Topic: "${topic}"
-      Difficulty: ${difficulty}/10
+  あなたはプロのクイズ作家です。
+  以下の「ソーステキスト」の内容のみに基づいて、4択クイズを作成してください。
+  
+  ソーステキスト:
+  """
+  ${combinedContent}
+  """
 
-      Your task is to create ${count} multiple-choice quiz questions about "${topic}" based ONLY on the provided text.
+  Target Audience: Japanese speakers.
+  Difficulty Level: ${difficulty}/10.
+  
+  ${exclusionText}
 
-      SOURCE TEXT (from Wikipedia "${wikiData.title}"):
-      """
-      ${truncatedContent} 
-      """
+  【制約事項】
+  1. 問題は、上記の「ソーステキスト」に含まれる情報だけで正解が導き出せるものにしてください。
+  2. **重要**: 問題文や解説文に「本文中には」「テキストによると」「上記によると」といった、メタな言及は**絶対に行わないでください**。あくまで一般的な知識クイズとして自然に振る舞ってください。
+  3. 外部知識の使用は禁止です（ソーステキストにある情報のみを使うこと）。
+  4. 選択肢は4つ（正解1つ、不正解3つ）作成してください。
+  5. 不正解の選択肢（誤答）は、もっともらしいが、ソーステキストの内容に基づくと明確に間違いであるものにしてください。
+  6. 「解説（explanation）」には、正解の理由を説明してください。「出典」は別途付与するため、解説文の中にURLを含める必要はありません。
 
-      NEGATIVE CONSTRAINTS (STRICTLY FORBIDDEN):
-      - DO NOT ask about "the text", "this article", "the author", or "Wikipedia".
-      - DO NOT ask meta-questions like "What is the title of this passage?".
-      - DO NOT output any markdown formatting like \`\`\`json or \`\`\`. Output RAW JSON only.
-
-      REQUIREMENTS:
-      1. Questions must be in Japanese.
-      2. Questions must test knowledge about "${topic}" (history, facts, people, definitions).
-      3. Create 4 options: 1 Correct, 3 Distractors.
-      4. Explanation must cite the specific fact from the text.
-      
-      OUTPUT FORMAT (JSON ARRAY ONLY):
-      [
-        {
-          "question": "日本の首都はどこですか？",
-          "options": [
-            { "text": "東京", "is_correct": true },
-            { "text": "大阪", "is_correct": false },
-            { "text": "京都", "is_correct": false },
-            { "text": "福岡", "is_correct": false }
-          ],
-          "explanation": "日本の首都は東京とされています。(出典: ${wikiData.url})",
-          "citation": "${wikiData.url}"
-        }
-      ]
-      
-      ${exclusionText}
-    `;
+  【出力フォーマット (JSON ARRAY)】
+  [
+    {
+      "question": "クイズの問題文（日本語）。",
+      "options": [
+        { "text": "選択肢1", "is_correct": boolean },
+        { "text": "選択肢2", "is_correct": boolean },
+        { "text": "選択肢3", "is_correct": boolean },
+        { "text": "選択肢4", "is_correct": boolean }
+      ],
+      "explanation": "解説文（日本語）。"
+    }
+  ]
+  Create ${count} questions.
+`;
 
   const payload = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 8000 } // Increased token limit for multiple questions
+    generationConfig: { temperature: 0.3, maxOutputTokens: 8000 }
   };
 
   try {
     const response = UrlFetchApp.fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
       {
         method: 'post',
         contentType: 'application/json',
@@ -1042,80 +690,41 @@ function generateCandidates(apiKey, topic, difficulty, exclusionText, count, wik
       }
     );
 
-    if (response.getResponseCode() !== 200) {
-      console.error("Gemini Gen Error", response.getContentText());
-      return [];
-    }
+    const json = parseGeminiJSON(response); // Use helper
 
-    // Parse using robust helper
-    const json = JSON.parse(response.getContentText());
-    const text = getGeminiText(json);
+    if (Array.isArray(json)) return processCandidates(json, sourceUrls);
 
-    if (!text) return [];
-
-    // Robust JSON extraction using Regex to find the first [ and last ]
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-        console.warn("generateCandidates: No JSON array found in text");
-        return [];
-    }
-    
-    try {
-        const candidates = JSON.parse(jsonMatch[0]);
-        // Force inject the URL just in case LLM messed it up
-        return candidates.map(c => {
-          c.citation = wikiData.url;
-
-          let cleanExplanation = c.explanation || "";
-          cleanExplanation = cleanExplanation.replace(/[\(（]\s*(Source|出典|Reference|ソース)[:：].*?[\)）]/gi, "");
-          cleanExplanation = cleanExplanation.replace(/(Source|出典|Reference|ソース)[:：].*?$/mi, "");
-          cleanExplanation = cleanExplanation.replace(/https?:\/\/[^\s\)]+/gi, "");
-          cleanExplanation = cleanExplanation.replace(/\s{2,}/g, " ").trim();
-          c.explanation = `${cleanExplanation} (出典: ${wikiData.url})`;
-
-           // Ensure at least one correct answer exists
-           if(c.options && Array.isArray(c.options) && c.options.length >= 2) {
-             if(!c.options.some(o => o.is_correct)) {
-                 c.options[0].is_correct = true; 
-             }
-           }
-           return c;
-        }).filter(c => c.question && c.options && Array.isArray(c.options) && c.options.length >= 2);
-    } catch (e) {
-        console.error("JSON Parse Error:", e);
-        return [];
-    }
-
-    try {
-      const candidates = JSON.parse(jsonMatch[0]);
-      // Force inject the URL just in case LLM messed it up
-      return candidates.map(c => {
-        c.citation = wikiData.url;
-
-        let cleanExplanation = c.explanation || "";
-        cleanExplanation = cleanExplanation.replace(/[\(（]\s*(Source|出典|Reference|ソース)[:：].*?[\)）]/gi, "");
-        cleanExplanation = cleanExplanation.replace(/(Source|出典|Reference|ソース)[:：].*?$/mi, "");
-        cleanExplanation = cleanExplanation.replace(/https?:\/\/[^\s\)]+/gi, "");
-        cleanExplanation = cleanExplanation.replace(/\s{2,}/g, " ").trim();
-        c.explanation = `${cleanExplanation} (出典: ${wikiData.url})`;
-
-        // Ensure at least one correct answer exists
-        if (c.options && Array.isArray(c.options) && c.options.length >= 2) {
-          if (!c.options.some(o => o.is_correct)) {
-            c.options[0].is_correct = true;
-          }
-        }
-        return c;
-      });
-    } catch (e) {
-      console.error("JSON Parse Error:", e);
-      return [];
-    }
+    return [];
 
   } catch (e) {
     console.error("Candidate Gen Exception: " + e.toString());
     return [];
   }
+}
+
+function processCandidates(candidates, sourceUrls) {
+  if (!Array.isArray(candidates)) return [];
+
+  return candidates.map(c => {
+    // Citation
+    c.citation = sourceUrls.join(", ");
+
+    // Clean Explanation
+    let cleanExplanation = c.explanation || "";
+    cleanExplanation = cleanExplanation.replace(/[\(（]\s*(Source|出典|Reference|ソース)[:：].*?[\)）]/gi, "");
+    cleanExplanation = cleanExplanation.replace(/(Source|出典|Reference|ソース)[:：].*?$/mi, "");
+    cleanExplanation = cleanExplanation.replace(/https?:\/\/[^\s\)]+/gi, "");
+    cleanExplanation = cleanExplanation.replace(/\s{2,}/g, " ").trim();
+    c.explanation = `${cleanExplanation} (出典: ${sourceUrls.join(", ")})`;
+
+    // Validate Options
+    if (c.options && Array.isArray(c.options) && c.options.length >= 2) {
+      if (!c.options.some(o => o.is_correct)) {
+        c.options[0].is_correct = true;
+      }
+    }
+    return c;
+  }).filter(c => c.question && c.options && Array.isArray(c.options) && c.options.length >= 2);
 }
 
 
@@ -1137,6 +746,171 @@ function shuffleOptions(q) {
   };
 }
 
+// --- Wikipedia Helpers (Adapted for GAS) ---
+
+function searchWikipedia(topic) {
+  // Fetch more results (10) to allow re-ranking
+  const url = "https://ja.wikipedia.org/w/api.php?action=query&list=search&srsearch=" + encodeURIComponent(topic) + "&format=json&srlimit=10";
+  try {
+    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    if (response.getResponseCode() !== 200) return [];
+
+    const json = JSON.parse(response.getContentText());
+    if (json.query && json.query.search && json.query.search.length > 0) {
+      const results = json.query.search;
+
+      // --- Re-ranking Logic ---
+      // 1. Tokenize topic
+      // Split by colon or space, remove empty strings, convert to lowercase
+      const tokens = topic.split(/[:\s\u3000]+/).filter(t => t.length > 0).map(t => t.toLowerCase());
+
+      // 2. Score each result
+      results.forEach(r => {
+        let score = 0;
+        const text = (r.title + " " + (r.snippet || "")).toLowerCase(); // Combined search text
+
+        tokens.forEach(t => {
+          if (text.includes(t)) score++;
+        });
+
+        // Bonus for exact title match (optional)
+        if (r.title.toLowerCase() === topic.toLowerCase()) score += 5;
+
+        r._score = score;
+      });
+
+      // 3. Sort by Score (Descending)
+      results.sort((a, b) => b._score - a._score);
+
+      // Return top 3
+      return results.slice(0, 3);
+    }
+    return [];
+  } catch (e) {
+    console.error("Wikipedia Search Error: " + e.toString());
+    return [];
+  }
+}
+
+function getWikipediaContent(title) {
+  const url = "https://ja.wikipedia.org/w/api.php?action=query&prop=extracts&titles=" + encodeURIComponent(title) + "&explaintext=1&format=json&redirects=1";
+  try {
+    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    if (response.getResponseCode() !== 200) return null;
+
+    const json = JSON.parse(response.getContentText());
+    if (!json.query || !json.query.pages) return null;
+
+    const pages = json.query.pages;
+    const pageId = Object.keys(pages)[0];
+    if (pageId === "-1") return null;
+
+    const page = pages[pageId];
+    return {
+      title: page.title,
+      content: page.extract,
+      url: `https://ja.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, "_"))}`
+    };
+  } catch (e) {
+    console.error("Wiki Content Error: " + e.toString());
+    return null;
+  }
+}
+
+function validateCandidates(apiKey, candidates, wikiDataList) {
+  if (!wikiDataList || wikiDataList.length === 0) return candidates;
+  // Use first for context
+  const wikiData = wikiDataList[0];
+  const truncatedContent = wikiData.content.substring(0, 15000);
+
+  const candidatesToCheck = candidates.filter(q => q && q.options && Array.isArray(q.options));
+  const requests = [];
+
+  candidatesToCheck.forEach(q => {
+    const correctOption = q.options.find(o => o.is_correct)?.text || "Unknown";
+    const distractors = q.options.filter(o => !o.is_correct).map(o => o.text).join(", ");
+
+    // 1. Self-Correction
+    const prompt1 = `
+       Question: ${q.question}
+       Proposed Answer: ${correctOption}
+       
+       Verify this question against the following text ONLY.
+       SOURCE TEXT:
+       """
+       ${truncatedContent}
+       """
+ 
+       Is the proposed answer strictly supported by the text?
+       Return JSON: { "confident": boolean, "reason": "string" }
+     `;
+
+    // 2. Audit
+    const prompt2 = `
+       You are a strict quiz editor. Review this question.
+       SOURCE TEXT:
+       """
+       ${truncatedContent}
+       """
+ 
+       Question: ${q.question}
+       Correct Answer: ${correctOption}
+       Distractors: ${distractors}
+       Explanation: ${q.explanation}
+       
+       Verify facts based ONLY on the Source Text provided above.
+       Return JSON: { "pass": boolean, "reason": "string" }
+     `;
+
+    const makeReq = (p) => ({
+      url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        contents: [{ parts: [{ text: p }] }],
+        generationConfig: { temperature: 0.0, response_mime_type: "application/json" }
+      }),
+      muteHttpExceptions: true
+    });
+
+    requests.push(makeReq(prompt1));
+    requests.push(makeReq(prompt2));
+  });
+
+  if (requests.length === 0) return [];
+
+  console.log(`Running ${requests.length} validation checks...`);
+
+  try {
+    const responses = UrlFetchApp.fetchAll(requests);
+    const validBatch = [];
+
+    for (let i = 0; i < candidatesToCheck.length; i++) {
+      // Validation logic
+      if (responses.length <= i * 2 + 1) break;
+
+      const r1 = parseGeminiJSON(responses[i * 2]);
+      const r2 = parseGeminiJSON(responses[i * 2 + 1]);
+
+      const check1 = r1?.confident === true;
+      const check2 = r2?.pass === true;
+
+      // Relaxed check: if Auditor says pass, or Scaled Confidence
+      if (check2 || check1) {
+        validBatch.push(candidatesToCheck[i]);
+      } else {
+        console.log("Rejected Q:", candidatesToCheck[i].question);
+      }
+    }
+    return validBatch;
+  } catch (e) {
+    console.error("Validation Error: " + e.toString());
+    return candidates;
+  }
+}
+
+// --- Other Features (Refined / Friends) ---
+
 function refineInterest(params) {
   try {
     const interest = params.interest;
@@ -1154,54 +928,51 @@ function refineInterest(params) {
     // --- STAGE 1: INITIAL DISCOVERY (History is Empty) ---
     if (history.length === 0) {
       prompt = `
-          You are a helpful assistant for "Knowly". A user has entered an interest: "${interest}".
-          Your goal is to ask ONE clarification question to help them find a specific passion.
-          
-          RULES:
-          - Return 'broad'.
-          - Create a friendly Japanese clarification question.
-          - Question format: "いいですね！${interest}の中でも、特に何に興味がありますか？（例：[Specific Examples]）"
-          - Do not assume a specific topic yet.
-          
-          Return JSON:
-          {
-            "status": "broad",
-            "question": "string (Japanese question)",
-            "refined_topic": null
-          }
-        `;
+      You are a helpful assistant for "Knowly". A user has entered an interest: "${interest}".
+      Your goal is to ask ONE clarification question to help them find a specific passion.
+      
+      RULES:
+      - Return 'broad'.
+      - Create a friendly Japanese clarification question.
+      - Question format: "いいですね！${interest}の中でも、特に何に興味がありますか？（例：[Specific Examples]）"
+      - Do not assume a specific topic yet.
+      
+      Return JSON:
+      {
+        "status": "broad",
+        "question": "string (Japanese question)",
+        "refined_topic": null
+      }
+    `;
     }
     // --- STAGE 2: FINALIZATION (History Exists) ---
     else {
       // The user has replied. We MUST finalize now.
-      // We need to extract the user's latest input from the history or imply it.
-      // Since we pass the full history, the last item is likely the user's answer.
       const lastUserMessage = history[history.length - 1].text;
 
       prompt = `
-          You are a helpful assistant for "Knowly".
-          The user is interested in "${interest}".
-          I asked them a clarification question, and they just replied: "${lastUserMessage}".
-          
-          YOUR GOAL: Combine the original interest and their reply into a final specific topic.
-          
-          RULES:
-          - RETURN 'specific' ONLY.
-          - DO NOT ASK MORE QUESTIONS. This is the final step.
-          - If user said "All", "General", "Everything", "特にない", "全部":
-            -> Refined Topic: "${interest}: General"
-          - Otherwise:
-            -> Refined Topic: "${interest}: ${lastUserMessage}" (Clean up if needed, e.g. remove "Check" or "I like")
-            
-          Return JSON:
-          {
-            "status": "specific", 
-            "question": null,
-            "refined_topic": "string (The final topic)"
-          }
-        `;
+      You are a helpful assistant for "Knowly".
+      The user is interested in "${interest}".
+      I asked them a clarification question, and they just replied: "${lastUserMessage}".
+      
+      YOUR GOAL: Combine the original interest and their reply into a final specific topic.
+      
+      RULES:
+      - RETURN 'specific' ONLY.
+      - DO NOT ASK MORE QUESTIONS. This is the final step.
+      - If user said "All", "General", "Everything", "特にない", "全部":
+        -> Refined Topic: "${interest}: General"
+      - Otherwise:
+        -> Refined Topic: "${interest}: ${lastUserMessage}" (Clean up if needed, e.g. remove "Check" or "I like")
+        
+      Return JSON:
+      {
+        "status": "specific", 
+        "question": null,
+        "refined_topic": "string (The final topic)"
+      }
+    `;
     }
-
 
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
     const response = UrlFetchApp.fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`, {
@@ -1209,7 +980,7 @@ function refineInterest(params) {
       contentType: 'application/json',
       payload: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ google_search: {} }], // <--- The Fundamental Fix: Enable Google Search Grounding
+        tools: [{ google_search: {} }],
         generationConfig: {
           temperature: 0.3,
           maxOutputTokens: 2000,
@@ -1217,43 +988,7 @@ function refineInterest(params) {
       })
     });
 
-    const json = JSON.parse(response.getContentText());
-
-    if (!json.candidates || json.candidates.length === 0) {
-      console.error("Gemini Error (Refine): No candidates returned.", JSON.stringify(json));
-      // Fallback to accepting the interest as is if AI fails
-      return {
-        status: "specific",
-        refined_topic: interest,
-        note: "AI refinement failed, used original input."
-      };
-    }
-
-    const text = getGeminiText(json);
-
-    if (!text) {
-      console.error("Gemini Error (Refine): Invalid structure or empty text.", JSON.stringify(json));
-      return { status: "specific", refined_topic: interest };
-    }
-
-    // Robust JSON Extraction for Object
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      text = text.substring(firstBrace, lastBrace + 1);
-    } else {
-      console.error("Gemini Error (Refine): No JSON object found.", text);
-      // Fallback
-      return { status: "specific", refined_topic: interest };
-    }
-
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      console.error("Gemini Error (Refine): JSON Parse failed.", text);
-      return { status: "specific", refined_topic: interest };
-    }
+    return parseGeminiJSON(response) || { status: "specific", refined_topic: interest };
 
   } catch (e) {
     return { status: "error", message: e.toString() };
@@ -1261,7 +996,6 @@ function refineInterest(params) {
 }
 
 function getQuiz(params) {
-  // Deprecated/Mock placeholder
   return { status: "error", message: "Use generate_quiz instead" };
 }
 
@@ -1292,7 +1026,6 @@ function getFollowedUserIds(ss, followerId) {
 
   const followedIds = new Set();
 
-  // Skip header, assuming row 1 is data start
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]) === followerId) {
       followedIds.add(String(data[i][1]));
@@ -1316,13 +1049,11 @@ function searchUsers(params) {
     const data = usersSheet.getDataRange().getValues();
     const results = [];
 
-    // Skip header
     for (let i = 1; i < data.length; i++) {
       const row = data[i]; // user_id (0), nickname (1), password (2), interests (3), avatar_url (4)
       const userId = String(row[0]);
       const nickname = String(row[1]);
 
-      // Simple correct match
       if (userId !== currentUserId && nickname.toLowerCase().includes(query)) {
         results.push({
           user_id: userId,
@@ -1354,7 +1085,6 @@ function toggleFollow(params) {
     const data = followsSheet.getDataRange().getValues();
     let rowIndexToDelete = -1;
 
-    // Check availability
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]) === followerId && String(data[i][1]) === followingId) {
         rowIndexToDelete = i + 1; // 1-based index
@@ -1425,34 +1155,27 @@ function getExploreInterests(params) {
     // Get valid followed IDs
     const followedIds = getFollowedUserIds(ss, currentUserId);
     if (followedIds.size === 0) {
-      // Fallback: If no friends, maybe return nothing or a "Find Friends" prompt?
-      // For now, let's keep it empty to encourage finding friends, or user request implied ONLY followed users.
+      // Fallback: If no friends
       return { status: "success", interests: [] };
     }
 
     const data = usersSheet.getDataRange().getValues();
     let allInterests = [];
 
-    // Skip header
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       const rowUserId = String(row[0]);
 
-      // Filter by Followed Users
       if (followedIds.has(rowUserId)) {
         try {
-          // Parse interests JSON
           const interests = JSON.parse(row[3]);
           if (Array.isArray(interests)) {
             allInterests = allInterests.concat(interests);
           }
-        } catch (e) {
-          // Ignore parsing errors
-        }
+        } catch (e) { }
       }
     }
 
-    // Deduplicate and randomize
     const uniqueInterests = [...new Set(allInterests)];
     const shuffled = uniqueInterests.sort(() => 0.5 - Math.random());
     const selected = shuffled.slice(0, 10);
@@ -1469,7 +1192,6 @@ function getExploreInterests(params) {
 
 // Function to run in editor to trigger permissions
 function test_auth() {
-  // Explicitly call UrlFetchApp to force authorization prompt in editor
   console.log("Testing authorization...");
   UrlFetchApp.fetch("https://www.google.com");
   console.log("Authorization successful.");

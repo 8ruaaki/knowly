@@ -530,11 +530,19 @@ async function generateQuiz(params) {
       return { status: "error", message: "No Wikipedia results found for: " + topic };
     }
 
-    const index = Math.floor(Math.random() * Math.min(searchResults.length, 3));
-    const targetArticle = searchResults[index];
-    const wikiData = await getWikipediaContent(targetArticle.title);
+    // 2. Get Content from Top Results (Fetch Multiple)
+    // Fetch up to 3 pages to ensure broader coverage (e.g., "USJ" + "Jaws")
+    const topResults = searchResults.slice(0, 3);
+    const wikiDataList = [];
 
-    if (!wikiData || !wikiData.content) {
+    for (const result of topResults) {
+      const data = await getWikipediaContent(result.title);
+      if (data && data.content) {
+        wikiDataList.push(data);
+      }
+    }
+
+    if (wikiDataList.length === 0) {
       return { status: "error", message: "Failed to retrieve content from Wikipedia." };
     }
 
@@ -545,12 +553,12 @@ async function generateQuiz(params) {
 
       console.log(`Attempt ${attempts}: Generating ${countToGenerate} candidates for ${needed} slots.`);
 
-      const candidates = await generateCandidates(apiKey, topic, difficulty, exclusionText, countToGenerate, wikiData);
+      const candidates = await generateCandidates(apiKey, topic, difficulty, exclusionText, countToGenerate, wikiDataList);
 
       if (candidates.length === 0) continue;
 
-      // Validate candidates (Added missing call in server.js)
-      const validatedBatch = await validateCandidates(apiKey, candidates, wikiData);
+      // Validate candidates
+      const validatedBatch = await validateCandidates(apiKey, candidates, wikiDataList[0]); // Use the first article for validation context
 
       // 1. Add Validated Questions First (High Quality)
       for (const q of validatedBatch) {
@@ -577,53 +585,56 @@ async function generateQuiz(params) {
 
     if (validQuestions.length === 0) {
       console.warn("Valid questions 0. Using FORCE fallback from candidates.");
-      const candidates = await generateCandidates(apiKey, topic, difficulty, exclusionText, TARGET_COUNT, wikiData);
-       if (candidates && candidates.length > 0) {
-         validQuestions = candidates.map(q => shuffleOptions(q));
-       }
+      const candidates = await generateCandidates(apiKey, topic, difficulty, exclusionText, TARGET_COUNT, wikiDataList);
+      if (candidates && candidates.length > 0) {
+        validQuestions = candidates.map(q => shuffleOptions(q));
+      }
     }
 
     // --- FINAL FALLBACK: If AI generation completely failed, generate simple quiz programmatically ---
     if (validQuestions.length === 0) {
-        console.warn("AI Generation Failed. Using programmatic fallback.");
-        
-        // Extract first sentence for a natural quiz
-        let summary = wikiData.content.split('。')[0];
-        if (summary.length > 80) summary = summary.substring(0, 80) + "...";
-        
-        const fallbackQs = [
-             {
-                question: `「${wikiData.title}」に関する説明として正しいものはどれですか？`,
-                options: [
-                  summary + "。",
-                  "この用語は、19世紀のフランス文学に由来する。",
-                  "これは架空の概念であり、実在しない。",
-                  "詳細な記録は一切残されていない。"
-                ],
-                correct_index: 0,
-                explanation: `Wikipediaの概要には「${summary}」と記載されています。(出典: ${wikiData.url})`,
-                citation: wikiData.url
-            },
-            {
-                question: `「${wikiData.title}」について調べる際、最も信頼できる情報源の一つは何ですか？`,
-                options: ["Wikipediaなどの百科事典", "個人の感想ブログ", "噂話", "何もしない"],
-                correct_index: 0,
-                explanation: `Wikipediaなどの百科事典は、基本的な情報を網羅的に知るのに役立ちます。(出典: ${wikiData.url})`,
-                citation: wikiData.url
-            },
-            {
-                question: `「${wikiData.title}」の内容が含まれている可能性が高いカテゴリは？`,
-                options: ["一般教養・知識", "極秘ファイル", "未来予知", "個人の日記"],
-                correct_index: 0,
-                explanation: `「${wikiData.title}」は一般的な知識として分類されます。(出典: ${wikiData.url})`,
-                citation: wikiData.url
-            }
-        ];
-        validQuestions = fallbackQs.map(q => shuffleOptions(q));
+      console.warn("AI Generation Failed. Using programmatic fallback.");
+
+      // Use the first article for fallback content
+      const primaryWikiData = wikiDataList[0];
+
+      // Extract first sentence for a natural quiz
+      let summary = primaryWikiData.content.split('。')[0];
+      if (summary.length > 80) summary = summary.substring(0, 80) + "...";
+
+      const fallbackQs = [
+        {
+          question: `「${primaryWikiData.title}」に関する説明として正しいものはどれですか？`,
+          options: [
+            summary + "。",
+            "この用語は、19世紀のフランス文学に由来する。",
+            "これは架空の概念であり、実在しない。",
+            "詳細な記録は一切残されていない。"
+          ],
+          correct_index: 0,
+          explanation: `Wikipediaの概要には「${summary}」と記載されています。(出典: ${primaryWikiData.url})`,
+          citation: primaryWikiData.url
+        },
+        {
+          question: `「${primaryWikiData.title}」について調べる際、最も信頼できる情報源の一つは何ですか？`,
+          options: ["Wikipediaなどの百科事典", "個人の感想ブログ", "噂話", "何もしない"],
+          correct_index: 0,
+          explanation: `Wikipediaなどの百科事典は、基本的な情報を網羅的に知るのに役立ちます。(出典: ${primaryWikiData.url})`,
+          citation: primaryWikiData.url
+        },
+        {
+          question: `「${primaryWikiData.title}」の内容が含まれている可能性が高いカテゴリは？`,
+          options: ["一般教養・知識", "極秘ファイル", "未来予知", "個人の日記"],
+          correct_index: 0,
+          explanation: `「${primaryWikiData.title}」は一般的な知識として分類されます。(出典: ${primaryWikiData.url})`,
+          citation: primaryWikiData.url
+        }
+      ];
+      validQuestions = fallbackQs.map(q => shuffleOptions(q));
     }
 
     if (validQuestions.length === 0) {
-       // Should be unreachable
+      // Should be unreachable
       return { status: "error", message: "Failed to generate valid questions after checks." };
     }
 
@@ -717,14 +728,14 @@ function parseGeminiJSON(response) {
   try {
     // Check for HTTP error first
     if (response.getResponseCode && response.getResponseCode() !== 200) return null;
-    
+
     // Get JSON object from response
-    const json = response.getJson ? response.getJson() : response; 
+    const json = response.getJson ? response.getJson() : response;
     const text = getGeminiText(json);
 
     if (!text) {
-        console.warn("parseGeminiJSON: No text in response");
-        return null;
+      console.warn("parseGeminiJSON: No text in response");
+      return null;
     }
 
     console.log("Raw Gemini Response:", text.substring(0, 200) + "..."); // Debug log
@@ -732,10 +743,10 @@ function parseGeminiJSON(response) {
     // Robust JSON extraction using Regex to find the first { and last }
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-        console.warn("parseGeminiJSON: No JSON object found in text");
-        return null;
+      console.warn("parseGeminiJSON: No JSON object found in text");
+      return null;
     }
-    
+
     const cleanText = jsonMatch[0];
     return JSON.parse(cleanText);
   } catch (e) {
@@ -745,111 +756,131 @@ function parseGeminiJSON(response) {
   }
 }
 
-async function generateCandidates(apiKey, topic, difficulty, exclusionText, count, wikiData) {
-  if (!wikiData || !wikiData.content) return [];
+function generateCandidates(apiKey, topic, difficulty, exclusionText, count, wikiDataList) {
+  if (!wikiDataList || wikiDataList.length === 0) return Promise.resolve([]);
 
-  console.log(`Generating quiz for topic: ${topic}`);
-  console.log(`Source Article Title: ${wikiData.title}`);
-  
-  const truncatedContent = wikiData.content.substring(0, 15000);
-  
-  // Revised Prompt with explicit Topic context and Few-Shot example
-  const singlePrompt = `
-      You are a professional quiz creator.
+  // Combine content form all pages
+  let combinedContent = "";
+  const sourceUrls = [];
+
+  for (const data of wikiDataList) {
+    if (data && data.content) {
+      sourceUrls.push(data.url);
+      combinedContent += `\n--- SOURCE: ${data.title} ---\n${data.content.substring(0, 10000)}\n`;
+    }
+  }
+
+  // Truncate
+  if (combinedContent.length > 50000) {
+    combinedContent = combinedContent.substring(0, 50000) + "\n...(truncated)...";
+  }
+
+  const prompt = `
+      あなたはプロのクイズ作家です。
+      以下の「ソーステキスト」の内容のみに基づいて、4択クイズを作成してください。
+      
+      ソーステキスト:
+      """
+      ${combinedContent}
+      """
+
       Target Audience: Japanese speakers.
-      Topic: "${topic}"
-      Difficulty: ${difficulty}/10
+      Difficulty Level: ${difficulty}/10.
 
-      Your task is to create a multiple-choice quiz question about "${topic}" based ONLY on the provided text.
-
-      SOURCE TEXT (from Wikipedia "${wikiData.title}"):
-      """
-      ${truncatedContent} 
-      """
-
-      NEGATIVE CONSTRAINTS (STRICTLY FORBIDDEN):
-      - DO NOT ask about "the text", "this article", "the author", or "Wikipedia".
-      - DO NOT ask meta-questions like "What is the title of this passage?".
-      - DO NOT use phrases like "According to the text", "Based on the article", "In this passage" in the question text. The question should stand alone as a general knowledge question.
-      - DO NOT output any markdown formatting like \`\`\`json or \`\`\`. Output RAW JSON only.
-
-      REQUIREMENTS:
-      1. Question must be in Japanese.
-      2. Question must test knowledge about "${topic}" (history, facts, people, definitions).
-      3. Create 4 options: 1 Correct, 3 Distractors.
-      4. Explanation must cite the specific fact from the text.
-      
-      OUTPUT FORMAT (JSON ONLY):
-      {
-        "question": "日本の首都はどこですか？",
-        "options": [
-          { "text": "東京", "is_correct": true },
-          { "text": "大阪", "is_correct": false },
-          { "text": "京都", "is_correct": false },
-          { "text": "福岡", "is_correct": false }
-        ],
-        "explanation": "日本の首都は東京とされています。(出典: ${wikiData.url})",
-        "citation": "${wikiData.url}"
-      }
-      
       ${exclusionText}
+
+      【制約事項】
+      1. 問題は、上記の「ソーステキスト」に含まれる情報だけで正解が導き出せるものにしてください。
+      2. **重要**: 問題文や解説文に「本文中には」「テキストによると」「上記によると」といった、メタな言及は**絶対に行わないでください**。あくまで一般的な知識クイズとして自然に振る舞ってください。
+      3. 外部知識の使用は禁止です（ソーステキストにある情報のみを使うこと）。
+      4. 選択肢は4つ（正解1つ、不正解3つ）作成してください。
+      5. 不正解の選択肢（誤答）は、もっともらしいが、ソーステキストの内容に基づくと明確に間違いであるものにしてください。
+      6. 「解説（explanation）」には、正解の理由を説明してください。「出典」は別途付与するため、解説文の中にURLを含める必要はありません。
+
+      【出力フォーマット (JSON ARRAY)】
+      [
+        {
+          "question": "クイズの問題文（日本語）。",
+          "options": [
+            { "text": "選択肢1", "is_correct": boolean },
+            { "text": "選択肢2", "is_correct": boolean },
+            { "text": "選択肢3", "is_correct": boolean },
+            { "text": "選択肢4", "is_correct": boolean }
+          ],
+          "explanation": "解説文（日本語）。"
+        }
+      ]
     `;
 
-  const requests = [];
-  for (let i = 0; i < count; i++) {
-    requests.push({
-      url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      method: 'post',
-      headers: { 'Content-Type': 'application/json' },
-      payload: JSON.stringify({
-        contents: [{ parts: [{ text: singlePrompt }] }],
-        generationConfig: {
-          temperature: 0.3 + (i * 0.1), // Slightly higher temp for variety
-          response_mime_type: "application/json"
-        }
-      })
-    });
-  }
+  const payload = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.3, maxOutputTokens: 8000 }
+  };
 
-  try {
-    const responses = await UrlFetchApp.fetchAll(requests);
-    const candidates = [];
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`;
 
-    for (const response of responses) {
-      const q = parseGeminiJSON(response);
+  return UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  })
+    .then(response => {
+      if (response.getResponseCode() !== 200) {
+        console.error("Gemini Gen Error", response.getContentText());
+        return [];
+      }
 
-      if (!q) continue;
+      const json = response.getJson();
+      const text = getGeminiText(json);
+      if (!text) return [];
+
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) {
+        try {
+          const directParse = JSON.parse(text);
+          if (Array.isArray(directParse)) return processCandidates(directParse, sourceUrls);
+        } catch (e) { }
+        return [];
+      }
 
       try {
-        q.citation = wikiData.url;
-
-        // Clean up explanation
-        let cleanExplanation = q.explanation || "";
-        cleanExplanation = cleanExplanation.replace(/[\(（]\s*(Source|出典|Reference|ソース)[:：].*?[\)）]/gi, "");
-        cleanExplanation = cleanExplanation.replace(/(Source|出典|Reference|ソース)[:：].*?$/mi, "");
-        cleanExplanation = cleanExplanation.replace(/https?:\/\/[^\s\)]+/gi, "");
-        cleanExplanation = cleanExplanation.replace(/\s{2,}/g, " ").trim();
-        q.explanation = `${cleanExplanation} (出典: ${wikiData.url})`;
-
-        // Validate structure
-        if (q.question && Array.isArray(q.options) && q.options.length >= 2) {
-             // Ensure at least one correct answer exists
-             if(!q.options.some(o => o.is_correct)) {
-                 q.options[0].is_correct = true; // Fallback fix
-             }
-             candidates.push(q);
-        } else {
-            console.warn("Invalid question structure:", JSON.stringify(q));
-        }
+        const candidates = JSON.parse(jsonMatch[0]);
+        return processCandidates(candidates, sourceUrls);
       } catch (e) {
-        console.error("Candidate Processing Error:", e);
+        console.error("JSON Parse Error:", e);
+        return [];
+      }
+    })
+    .catch(e => {
+      console.error("Candidate Gen Exception:", e);
+      return [];
+    });
+}
+
+function processCandidates(candidates, sourceUrls) {
+  if (!Array.isArray(candidates)) return [];
+
+  return candidates.map(c => {
+    // Citation
+    c.citation = sourceUrls.join(", ");
+
+    // Clean Explanation
+    let cleanExplanation = c.explanation || "";
+    cleanExplanation = cleanExplanation.replace(/[\(（]\s*(Source|出典|Reference|ソース)[:：].*?[\)）]/gi, "");
+    cleanExplanation = cleanExplanation.replace(/(Source|出典|Reference|ソース)[:：].*?$/mi, "");
+    cleanExplanation = cleanExplanation.replace(/https?:\/\/[^\s\)]+/gi, "");
+    cleanExplanation = cleanExplanation.replace(/\s{2,}/g, " ").trim();
+    c.explanation = `${cleanExplanation} (出典: ${sourceUrls.join(", ")})`;
+
+    // Validate Options
+    if (c.options && Array.isArray(c.options) && c.options.length >= 2) {
+      if (!c.options.some(o => o.is_correct)) {
+        c.options[0].is_correct = true;
       }
     }
-    return candidates;
-  } catch (e) {
-    console.error("Candidate Gen Exception:", e);
-    return [];
-  }
+    return c;
+  }).filter(c => c.question && c.options && Array.isArray(c.options) && c.options.length >= 2);
 }
 
 function shuffleOptions(q) {

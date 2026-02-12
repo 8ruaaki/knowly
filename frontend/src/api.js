@@ -1,6 +1,6 @@
 const MOCK_API = false; // Toggle this to switch between Mock and Real
 
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzjk1vSRUrJB3nQwSh9uOB1ykvouLKK_UVlZBMvOIrBndvoELrPB-tb1gmRBhnId_-yOA/exec'; // Pointing to local Node server for testing
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyPWCO98bCag3S8ce4yPqX02EgQtC2RgiGivj8b5wtK-1j-EwkM2IFnGsyrdvmgDm_q/exec'; // Pointing to local Node server for testing
 
 // Mock Data
 const MOCK_QUIZ = {
