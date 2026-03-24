@@ -158,8 +158,8 @@ const QuizPage = () => {
                     )}
 
                     <p className="text-lg font-medium text-gray-700 mb-8">
-                        {score === 5 ? "Perfect Score! 🎉" :
-                            score >= 3 ? "Great Job! 👍" : "Keep Learning! 💪"}
+                        {score === questions.length ? "Perfect Score! 🎉" :
+                            score >= 2 ? "Great Job! 👍" : "Keep Learning! 💪"}
                     </p>
 
                     <button

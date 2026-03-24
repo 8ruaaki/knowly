@@ -278,7 +278,7 @@ function updateProgress(params) {
       }
     }
 
-    if (score < 5) {
+    if (score < 3) {
       return { status: "success", unlocked: false };
     }
 
@@ -286,7 +286,7 @@ function updateProgress(params) {
     const currentMax = progress ? Number(progress.max_level) : 1;
 
     let badgeAwarded = false;
-    if (Number(currentLevel) === 10 && Number(score) === 5) {
+    if (Number(currentLevel) === 10 && Number(score) === 3) {
       badgeAwarded = awardBadge(userId, topic);
     }
 
@@ -485,14 +485,189 @@ async function validateCandidates(apiKey, candidates, wikiData) {
   }
 }
 
+async function selectRelevantArticles(apiKey, originalTopic, searchResults) {
+  try {
+    const candidatesText = searchResults.map((r, i) => `${i + 1}. [${r.title}] ${r.snippet.replace(/<[^>]+>/g, '')}`).join('\n');
+
+    const prompt = `
+      You are a helpful assistant assisting a quiz generator.
+      The user is interested in: "${originalTopic}".
+      
+      We searched Wikipedia and found these candidates:
+      ${candidatesText}
+      
+      Which of these articles are strictly relevant to the user's interest "${originalTopic}"?
+      Rules:
+      1. Ignore unrelated articles (e.g. if interest is a band, ignore "back number" meaning "old issue").
+      2. **ALWAYS include the main entity page** (e.g. the band's page) if it appears, even if the user asked for a sub-topic like "songs" or "members", as it contains vital summary info.
+      3. Include specific pages that match the sub-topic (e.g. specific song pages).
+      
+      Return a JSON array of the 1-based indices of relevant articles.
+      Example: [1] or [1, 3]
+    `;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.0, response_mime_type: "application/json" }
+      },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    const json = parseGeminiJSON(response.data); // reuse existing helper
+    if (json && Array.isArray(json)) {
+      return json;
+    }
+    return [];
+
+  } catch (e) {
+    console.error("AI Filter Error:", e);
+    return [];
+  }
+}
+
+async function refineSearchQuery(apiKey, topic) {
+  try {
+    const prompt = `
+      You are a Wikipedia Search Expert.
+      The user wants to find a Wikipedia article about: "${topic}".
+      
+      Convert the user's input into the *single best* English or Japanese search query to find the specific main article on Wikipedia.
+      
+      Rules:
+      1. If the input is ambiguous (e.g. "backnumber" could be a band or issue), use the context (e.g. "backnumber:曲名" -> "back number (バンド)") to disambiguate.
+      2. If the input is already good (e.g. "猫"), return it as is.
+      3. Remove unnecessary suffixes like ":曲名", ":歴史" unless they help disambiguate (e.g. "Apple:会社" -> "Apple (企業)").
+      4. Return ONLY the search query string. No JSON, no explanations.
+      
+      Input: "${topic}"
+      Best Wikipedia Search Query:
+    `;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.0 }
+      },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
+    return text ? text.trim() : topic;
+
+  } catch (e) {
+    console.warn("Refine Error, falling back to original:", e.message);
+    return topic;
+  }
+}
+
+async function extractKeywords(apiKey, content, originalTopic, history = []) {
+  try {
+    const historyText = history.length > 0 ? "Previously covered sub-topics (AVOID THESE):\n" + history.join(", ") : "No previous history.";
+
+    const prompt = `
+      You are a Quiz Topic Expert.
+      The user is interested in: "${originalTopic}".
+      We have found a main article about this entity (content below).
+      
+      Extract 10 specific keywords, sub-topics, or related terms from the text that match the user's specific interest.
+      
+      RULES:
+      1. DO NOT extract keywords already covered in the history:
+         ${historyText}
+      2. Ensure you extract keywords from the ENTIRE text (beginning, middle, and end sections) to provide a diverse range of topics.
+      3. Focus on proper nouns, specific events, or technical terms that can form the basis of a deep-dive Wikipedia search.
+      
+      Source Text (Truncated):
+      """
+      ${content.substring(0, 10000)}
+      """
+      
+      Return ONLY a JSON array of strings.
+      Example: ["keyword1", "keyword2", ...]
+    `;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          response_mime_type: "application/json"
+        }
+      },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    const json = parseGeminiJSON(response.data);
+    if (json && Array.isArray(json)) {
+      return json;
+    }
+    return [];
+
+  } catch (e) {
+    console.warn("Keyword Extraction Error:", e.message);
+    return [];
+  }
+}
+
+async function selectBestArticle(apiKey, keyword, results) {
+  try {
+    const candidatesText = results.map((r, i) => `${i + 1}. ${r.title}: ${r.snippet.replace(/<[^>]+>/g, "")}`).join("\n");
+    const prompt = `
+      The user is interested in the sub-topic "${keyword}".
+      Which of the following Wikipedia articles is the BEST match for this specific sub-topic?
+      
+      Candidates:
+      ${candidatesText}
+      
+      Rules:
+      1. If a candidate title matches the keyword exactly or closely (e.g. "Christmas Song" vs "Christmas Song (back number song)"), select it.
+      2. If candidates are unrelated or seemingly random, select "0" (None).
+      3. If the best match is actually the Main Entity (already known), you can select "0".
+      
+      Return ONLY the 1-based index (e.g. 1, 2) or 0 if none are good specific matches.
+     `;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.0 }
+      },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || "0";
+    const index = parseInt(text.trim());
+
+    if (index > 0 && index <= results.length) {
+      return results[index - 1];
+    }
+    return null; // Fallback to Main Entity
+
+  } catch (e) {
+    console.warn("Select Best Article Error:", e.message);
+    return null;
+  }
+}
+
 function parseGeminiJSON(response) {
   try {
-    if (!response || response.getResponseCode() !== 200) return null;
-    const json = response.getJson();
-    let text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+    let text = "";
+    if (response && response.data && response.data.candidates) {
+      text = response.data.candidates?.[0]?.content?.parts?.[0]?.text;
+    }
     if (!text) return null;
+
+    // Clean Markdown code blocks
+    text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+
     return JSON.parse(text);
   } catch (e) {
+    console.error("JSON Parse Error:", e.message);
     return null;
   }
 }
@@ -503,6 +678,18 @@ async function generateQuiz(params) {
     const difficulty = params.difficulty || 1;
     const userId = params.user_id;
 
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    // --- AI QUERY REFINEMENT ---
+    console.log(`Refining search query for: "${topic}"...`);
+    let cleanedTopic = topic.replace(/[:：].*$/, "").trim(); // Fallback initial clean
+
+    if (apiKey && !apiKey.includes("YOUR_API_KEY")) {
+      cleanedTopic = await refineSearchQuery(apiKey, topic);
+    }
+
+    console.log(`Searching Wikipedia for: "${cleanedTopic}" (Original: "${topic}")`);
+
     const answeredQuestions = getAnsweredQuestions(userId, topic);
     let exclusionText = "";
     if (answeredQuestions.length > 0) {
@@ -512,80 +699,155 @@ async function generateQuiz(params) {
       `;
     }
 
-    const TARGET_COUNT = 5;
+    const TARGET_COUNT = 3; // Changed from 5 to 3 per user request
     let validQuestions = [];
     let attempts = 0;
     const MAX_ATTEMPTS = 2;
 
     // Hacky reload for dev environment
     require('dotenv').config({ override: true });
-    const apiKey = process.env.GEMINI_API_KEY;
+    // const apiKey = process.env.GEMINI_API_KEY; // Removed duplicate
 
     if (!apiKey || apiKey.includes("YOUR_API_KEY")) {
       return { status: "error", message: "GEMINI_API_KEY not configured" };
     }
 
-    const searchResults = await searchWikipedia(topic);
+    // Use cleaned topic for Wikipedia Search
+    console.log(`Searching Wikipedia for: "${cleanedTopic}" (Original: "${topic}")`);
+    const searchResults = await searchWikipedia(cleanedTopic);
     if (!searchResults || searchResults.length === 0) {
       return { status: "error", message: "No Wikipedia results found for: " + topic };
     }
 
-    // 2. Get Content from Top Results (Fetch Multiple)
-    // Fetch up to 3 pages to ensure broader coverage (e.g., "USJ" + "Jaws")
-    const topResults = searchResults.slice(0, 3);
+    // 3. Get Content from Top Results (Fetch Multiple)
+    // Fetch up to 5 pages to ensure broader coverage before filtering
+    let topResults = searchResults.slice(0, 5);
+
+    // --- AI SOURCE FILTERING ---
+    console.log(`Filtering ${topResults.length} candidates for context: "${topic}"...`);
+    const relevantIndices = await selectRelevantArticles(apiKey, topic, topResults);
+
+    let filteredResults = [];
+    if (relevantIndices.length > 0) {
+      // Filter based on AI selection (1-based index)
+      filteredResults = topResults.filter((_, i) => relevantIndices.includes(i + 1));
+      console.log(`AI selected ${filteredResults.length} articles: ${filteredResults.map(r => r.title).join(", ")}`);
+    } else {
+      console.warn("AI found no relevant articles. Fallback to top result.");
+      filteredResults = [topResults[0]];
+    }
+
+    // Limit to top 3 after filtering to save content tokens
+    const finalResults = filteredResults.slice(0, 3);
     const wikiDataList = [];
 
-    for (const result of topResults) {
+    for (const result of finalResults) {
       const data = await getWikipediaContent(result.title);
       if (data && data.content) {
         wikiDataList.push(data);
       }
     }
 
-    if (wikiDataList.length === 0) {
-      return { status: "error", message: "Failed to retrieve content from Wikipedia." };
-    }
+    // 4. Extract Keywords for Topic Expansion
+    let expansionKeywords = [];
+    if (wikiDataList.length > 0) {
+      console.log("Extracting expansion keywords for " + topic + " from main entity...");
+      expansionKeywords = await extractKeywords(apiKey, wikiDataList[0].content, topic, answeredQuestions);
 
-    while (validQuestions.length < TARGET_COUNT && attempts < MAX_ATTEMPTS) {
-      attempts++;
-      const needed = TARGET_COUNT - validQuestions.length;
-      const countToGenerate = needed + 2;
-
-      console.log(`Attempt ${attempts}: Generating ${countToGenerate} candidates for ${needed} slots.`);
-
-      const candidates = await generateCandidates(apiKey, topic, difficulty, exclusionText, countToGenerate, wikiDataList);
-
-      if (candidates.length === 0) continue;
-
-      // Validate candidates
-      const validatedBatch = await validateCandidates(apiKey, candidates, wikiDataList[0]); // Use the first article for validation context
-
-      // 1. Add Validated Questions First (High Quality)
-      for (const q of validatedBatch) {
-        if (validQuestions.length < TARGET_COUNT) {
-          const shuffled = shuffleOptions(q);
-          validQuestions.push(shuffled);
-        }
+      // Shuffle keywords to ensure variety
+      if (expansionKeywords.length > 0) {
+        expansionKeywords.sort(() => Math.random() - 0.5);
       }
 
-      // 2. Fallback: If we still don't have enough, fill with unvalidated candidates
-      if (validQuestions.length < TARGET_COUNT) {
-        console.warn(`Attempt ${attempts}: Validation filtered too many. Using fallback candidates.`);
-        for (const q of candidates) {
-          if (validQuestions.length < TARGET_COUNT) {
-            const isDuplicate = validQuestions.some(vq => vq.question === q.question);
-            if (!isDuplicate) {
-              const shuffled = shuffleOptions(q);
-              validQuestions.push(shuffled);
+      console.log("Extracted/Shuffled Keywords: " + expansionKeywords.join(", "));
+    }
+
+    // 5. ITERATIVE GENERATION LOOP (New User Request)
+    // For each keyword, search specifically, select best article (or fallback to main), and generate 1 question.
+
+    // Default to main entity if no keywords found
+    let searchTargets = expansionKeywords.length > 0 ? expansionKeywords : [cleanedTopic];
+
+    // If we have keywords, we limit to 3 questions total (one per keyword) as requested.
+    // If no keywords (just main topic), we might generate more? 
+    // User request: "Change question count from 5 to 3" -> Applies globally or just for this flow?
+    // Assuming global change to 3 for this flow.
+    const FINAL_TARGET_COUNT = 3;
+
+    let generatedCount = 0;
+
+    for (const keyword of searchTargets) {
+      if (validQuestions.length >= FINAL_TARGET_COUNT) break;
+
+      console.log(`\n--- Processing Keyword: ${keyword} ---`);
+
+      let targetWikiData = null;
+      let usedSource = "Main Entity";
+
+      // If it's a keyword expansion, search for specific article
+      if (expansionKeywords.includes(keyword)) {
+        const subQuery = `${cleanedTopic} ${keyword}`;
+        console.log(`Searching specific article for: "${subQuery}"`);
+        const subResults = await searchWikipedia(subQuery);
+
+        // Select Best Article
+        if (subResults && subResults.length > 0) {
+          const bestArticle = await selectBestArticle(apiKey, keyword, subResults.slice(0, 2));
+          if (bestArticle) {
+            console.log(`  -> Selected Specific Article: ${bestArticle.title}`);
+            const data = await getWikipediaContent(bestArticle.title);
+            if (data && data.content) {
+              targetWikiData = data;
+              usedSource = bestArticle.title;
             }
           }
         }
       }
+
+      // FALLBACK: If specific article not found or not selected, use Main Entity (wikiDataList[0])
+      if (!targetWikiData && wikiDataList.length > 0) {
+        console.log(`  -> Fallback to Main Entity for keyword: ${keyword}`);
+        targetWikiData = wikiDataList[0];
+      }
+
+      if (!targetWikiData) continue;
+
+      // Generate 1 Question for this keyword
+      // We pass [targetWikiData] as the source list (single source context)
+      // We mention the keyword in the prompt to ensure focus
+      const singleCandidate = await generateCandidates(
+        apiKey,
+        topic,
+        difficulty,
+        exclusionText,
+        1,
+        [targetWikiData],
+        [keyword] // Force focus on this keyword
+      );
+
+      if (singleCandidate && singleCandidate.length > 0) {
+        const q = singleCandidate[0];
+        // Add used source to explanation if different from title?
+        // The generateCandidates function already appends source URL from data.url
+        validQuestions.push(shuffleOptions(q));
+      }
     }
+
+    // If we still don't have 3 questions (e.g. only 1 keyword found), fill up using Main Entity + General Keywords
+    while (validQuestions.length < FINAL_TARGET_COUNT && wikiDataList.length > 0) {
+      console.log("Filling remaining slots with Main Entity questions...");
+      const needed = FINAL_TARGET_COUNT - validQuestions.length;
+      const candidates = await generateCandidates(apiKey, topic, difficulty, exclusionText, needed, wikiDataList, []);
+      for (const q of candidates) {
+        validQuestions.push(shuffleOptions(q));
+      }
+      if (candidates.length === 0) break; // Avoid infinite loop if generation fails
+    }
+
 
     if (validQuestions.length === 0) {
       console.warn("Valid questions 0. Using FORCE fallback from candidates.");
-      const candidates = await generateCandidates(apiKey, topic, difficulty, exclusionText, TARGET_COUNT, wikiDataList);
+      const candidates = await generateCandidates(apiKey, topic, difficulty, exclusionText, 3, wikiDataList); // 3 not TARGET_COUNT var to be safe if scope fails
       if (candidates && candidates.length > 0) {
         validQuestions = candidates.map(q => shuffleOptions(q));
       }
@@ -756,61 +1018,69 @@ function parseGeminiJSON(response) {
   }
 }
 
-function generateCandidates(apiKey, topic, difficulty, exclusionText, count, wikiDataList) {
-  if (!wikiDataList || wikiDataList.length === 0) return Promise.resolve([]);
+function generateCandidates(apiKey, topic, difficulty, exclusionText, count, wikiDataList, keywords = []) {
+  if (!wikiDataList || wikiDataList.length === 0) {
+    console.warn(`Invalid wikiDataList provided.`);
+    return [];
+  }
 
-  // Combine content form all pages
+  // Combine content from all pages
   let combinedContent = "";
   const sourceUrls = [];
+
+  // Truncate to save context
+  const MAX_PER_ARTICLE = 15000;
 
   for (const data of wikiDataList) {
     if (data && data.content) {
       sourceUrls.push(data.url);
-      combinedContent += `\n--- SOURCE: ${data.title} ---\n${data.content.substring(0, 10000)}\n`;
+      combinedContent += `\n--- SOURCE: ${data.title} ---\n${data.content.substring(0, MAX_PER_ARTICLE)}\n`;
     }
   }
 
-  // Truncate
-  if (combinedContent.length > 50000) {
-    combinedContent = combinedContent.substring(0, 50000) + "\n...(truncated)...";
-  }
+  const keywordInstruction = keywords.length > 0
+    ? `IMPORTANT: You must create questions based on these specific keywords: ${keywords.join(", ")}. Try to create one question for each keyword.`
+    : "";
 
   const prompt = `
-      あなたはプロのクイズ作家です。
-      以下の「ソーステキスト」の内容のみに基づいて、4択クイズを作成してください。
-      
-      ソーステキスト:
-      """
-      ${combinedContent}
-      """
+  あなたはプロのクイズ作家です。(You are a professional quiz generator.)
+  Generate ${count} multiple-choice questions based ONLY on the provided SOURCE TEXT.
+  
+  Topic: ${topic}
+  Target Audience: Japanese speakers.
+  Difficulty Level: ${difficulty}/10.
+  
+  ${keywordInstruction}
+  ${exclusionText}
+  
+  SOURCE TEXT:
+  """
+  ${combinedContent}
+  """
+  
+  【制約事項】
+  1. 問題は、上記の「ソーステキスト」に含まれる情報だけで正解が導き出せるものにしてください。
+  2. 言語: 日本語.
+  3. **重要**: 問題文や解説文に「本文中には」「テキストによると」「上記によると」といった、メタな言及は**絶対に行わないでください**。あくまで一般的な知識クイズとして自然に振る舞ってください。
+  4. 選択肢は4つ（正解1つ、不正解3つ）作成してください。
+  5. 不正解の選択肢（誤答）は、もっともらしいが、ソーステキストの内容に基づくと明確に間違いであるものにしてください。
+  6. 「解説（explanation）」には、正解の理由を説明してください。「出典」は別途付与するため、解説文の中にURLを含める必要はありません。
+  
+  【出力フォーマット (JSON ARRAY)】
+  [
+    {
+      "question": "クイズの問題文（日本語）。",
+      "options": [
+        { "text": "選択肢1", "is_correct": boolean },
+        { "text": "選択肢2", "is_correct": boolean },
+        { "text": "選択肢3", "is_correct": boolean },
+        { "text": "選択肢4", "is_correct": boolean }
+      ],
+      "explanation": "解説文（日本語）。"
+    }
+  ]
+`;
 
-      Target Audience: Japanese speakers.
-      Difficulty Level: ${difficulty}/10.
-
-      ${exclusionText}
-
-      【制約事項】
-      1. 問題は、上記の「ソーステキスト」に含まれる情報だけで正解が導き出せるものにしてください。
-      2. **重要**: 問題文や解説文に「本文中には」「テキストによると」「上記によると」といった、メタな言及は**絶対に行わないでください**。あくまで一般的な知識クイズとして自然に振る舞ってください。
-      3. 外部知識の使用は禁止です（ソーステキストにある情報のみを使うこと）。
-      4. 選択肢は4つ（正解1つ、不正解3つ）作成してください。
-      5. 不正解の選択肢（誤答）は、もっともらしいが、ソーステキストの内容に基づくと明確に間違いであるものにしてください。
-      6. 「解説（explanation）」には、正解の理由を説明してください。「出典」は別途付与するため、解説文の中にURLを含める必要はありません。
-
-      【出力フォーマット (JSON ARRAY)】
-      [
-        {
-          "question": "クイズの問題文（日本語）。",
-          "options": [
-            { "text": "選択肢1", "is_correct": boolean },
-            { "text": "選択肢2", "is_correct": boolean },
-            { "text": "選択肢3", "is_correct": boolean },
-            { "text": "選択肢4", "is_correct": boolean }
-          ],
-          "explanation": "解説文（日本語）。"
-        }
-      ]
-    `;
 
   const payload = {
     contents: [{ parts: [{ text: prompt }] }],

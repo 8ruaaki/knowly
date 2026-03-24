@@ -1,6 +1,7 @@
 const MOCK_API = false; // Toggle this to switch between Mock and Real
 
-const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyPWCO98bCag3S8ce4yPqX02EgQtC2RgiGivj8b5wtK-1j-EwkM2IFnGsyrdvmgDm_q/exec'; // Pointing to local Node server for testing
+const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxSNXcC8J3hgX6HrHX_5-F1drtWqukyyzrVcWmpJilrBJw29WKWCpLamLSWWm0fQKSlhg/exec';
+//const GAS_WEB_APP_URL = 'http://localhost:3000/api'; // Pointing to local Node server for testing
 
 // Mock Data
 const MOCK_QUIZ = {
@@ -66,7 +67,7 @@ export const api = {
             console.log(`Fetching mock quiz for: ${topic} (Level ${difficulty})`);
             return new Promise(resolve => setTimeout(() => resolve({
                 status: 'success',
-                questions: Array(5).fill(null).map((_, i) => ({
+                questions: Array(3).fill(null).map((_, i) => ({
                     question: `Level ${difficulty} Question ${i + 1} about ${topic}?`,
                     options: ['Option A', 'Option B', 'Option C', 'Option D'],
                     correct_index: 0,
@@ -91,7 +92,7 @@ export const api = {
         return res.json();
     },
     updateProgress: async (userId, topic, level, score, answeredQuestions = []) => {
-        if (MOCK_API) return { status: 'success', unlocked: score >= 5 };
+        if (MOCK_API) return { status: 'success', unlocked: score >= 3 };
         const params = new URLSearchParams({
             action: 'update_progress',
             user_id: userId,
